@@ -71,7 +71,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Australia/Sydney"
+TIME_ZONE = "Asia/Colombo"
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"

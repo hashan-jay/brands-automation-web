@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -51,7 +52,13 @@ class DashboardView(APIView):
         errors = [item.message for item in syncs if item.message]
         synced_at = syncs.order_by("-updated_at").values_list("updated_at", flat=True).first()
         stamp = timezone.localtime(synced_at).strftime("%H:%M:%S") if synced_at else ""
-        if errors and total_rows == 0:
+        refused_ip = _refused_ip(errors)
+        if refused_ip:
+            status_line = (
+                f"{stamp}  {total_rows} saved rows. "
+                f"The brand APIs refused this computer's address {refused_ip}."
+            ).strip()
+        elif errors and total_rows == 0:
             status_line = (stamp + "  " + " ".join(errors[:3])).strip()
         elif errors:
             status_line = f"{stamp}  {total_rows} API rows. " + " ".join(errors[:2])
@@ -102,6 +109,14 @@ class SyncView(APIView):
         note_watch(day)
         sync_day(day)
         return Response({"ok": True, "date": day.isoformat()})
+
+
+def _refused_ip(errors: list[str]) -> str:
+    for message in errors:
+        match = re.search(r"Invalid Access IP \[([0-9.]+)\]", message)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def _parse_day(value: object):

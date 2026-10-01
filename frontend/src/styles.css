@@ -97,12 +97,12 @@ button {
 
 .workspace {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
 }
 
-.side, .main { padding: 14px; }
+.side, .main { min-width: 0; padding: 14px; }
 
 .side, .login-card, .card form, .card {
   display: flex;
@@ -214,7 +214,7 @@ tr.rejected td:nth-child(16) { color: #6b7280; font-weight: 700; }
 .check { flex-direction: row; align-items: center; font-weight: 600; }
 
 @media (max-width: 900px) {
-  .workspace, .users, .cards { grid-template-columns: 1fr; }
+  .workspace, .users, .cards { grid-template-columns: minmax(0, 1fr); }
   .topbar { align-items: flex-start; flex-direction: column; }
   .table-wrap { max-height: 60vh; }
 }
