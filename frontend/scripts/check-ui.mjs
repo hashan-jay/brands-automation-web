@@ -30,9 +30,15 @@ try {
   report.push(["stats", (await page.$$eval(".cards strong", (items) => items.map((node) => node.textContent))).join(" | ")]);
 
   await page.select("aside select", "KABOOM77");
-  await page.waitForFunction(() => document.body.innerText.includes("Statistics · KABOOM77"));
-  report.push(["filteredHeading", await page.$eval(".stats h3", (node) => node.textContent)]);
+  await page.waitForFunction(() => {
+    const line = document.querySelector(".stats p")?.textContent || "";
+    return line.startsWith("KABOOM77:");
+  });
+  const brands = await page.$$eval("tbody tr td:nth-child(13)", (cells) => [...new Set(cells.map((cell) => cell.textContent))]);
+  report.push(["filteredBrands", brands.join(",")]);
   report.push(["filteredRows", await page.$$eval("tbody tr", (items) => items.length)]);
+  report.push(["date", await page.$eval("input[type=date]", (node) => node.value)]);
+  report.push(["clock", await page.evaluate(() => new Date().toString())]);
 
   await page.click("button.live");
   report.push(["live", (await page.$eval("button.live", (node) => node.textContent)).trim()]);
@@ -42,9 +48,9 @@ try {
   report.push(["users", await page.$eval("h2", (node) => node.textContent)]);
 
   await page.setViewport({ width: 390, height: 844 });
-  const back = await page.$("header button.ghost");
-  await back.click();
-  await page.waitForSelector("table");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".workspace");
+  report.push(["innerWidth", await page.evaluate(() => window.innerWidth)]);
   report.push(["mobileColumns", await page.$eval(".workspace", (node) => getComputedStyle(node).gridTemplateColumns)]);
 } catch (error) {
   report.push(["error", error.message]);

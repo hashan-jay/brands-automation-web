@@ -147,12 +147,11 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
         detail = " · ".join(part for part in (extra, _detail(raw)) if part)
         created = _parse_dt(raw.get("createdDateTime"))
         processed = _parse_dt(raw.get("processedDateTime"))
-        txn_day = timezone.localtime(created).date() if created else day
         prepared.append(
             Transaction(
                 brand=brand,
                 external_id=external_id,
-                txn_date=txn_day,
+                txn_date=day,
                 status=str(raw.get("status") or ""),
                 type=str(raw.get("type") or ""),
                 amount=_money(raw.get("cash")),
