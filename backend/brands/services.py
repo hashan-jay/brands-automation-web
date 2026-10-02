@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -22,6 +23,8 @@ _HTML_RE = re.compile(r"<[^>]+>")
 _lock = threading.Lock()
 _cache_lock = threading.Lock()
 _cache: dict[tuple[str, str, str], dict] = {}
+_http_local = threading.local()
+_TRANSIENT = {"ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout"}
 
 
 def sync_day(day: date, *, wait: bool = True) -> None:
@@ -92,7 +95,7 @@ def _collect_brand(brand: Brand, day: date) -> tuple[list[dict], list[str]]:
             errors.append(f"{brand.name} {status}: {error}")
         collected.extend(raw)
     for kind in ("DEPOSIT", "WITHDRAW"):
-        raw, error = _read_typed(brand, day_text, "COMPLETED", kind)
+        raw, error = _read_typed(brand, day_text, "COMPLETED", kind, force_full=pending_changed)
         if error:
             errors.append(f"{brand.name} COMPLETED {kind}: {error}")
         collected.extend(raw)
@@ -124,6 +127,10 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
     except ValueError:
         error = "The brand API did not return JSON"
         raw = []
+    if error in _TRANSIENT:
+        cached = _cache_get(key)
+        if cached and cached.get("raw"):
+            return list(cached["raw"]), ""
     if error:
         cached = _cache_get(key)
         if cached:
@@ -131,14 +138,69 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
     return raw, error
 
 
-def _read_typed(brand: Brand, day: str, status: str, txn_type: str) -> tuple[list[dict], str]:
+def _read_typed(brand: Brand, day: str, status: str, txn_type: str, force_full: bool = False) -> tuple[list[dict], str]:
+    """Completed deposits and withdrawals are paged separately so bank names are not cut off."""
+    key = (brand.name, f"{status}:{txn_type}", day)
     try:
-        raw, error, _total = fetch_brand(brand, day, status, max_pages=40, txn_type=txn_type)
+        raw, error, total = fetch_brand(brand, day, status, max_pages=1, txn_type=txn_type)
+        head = str(raw[0].get("id") or "") if raw else ""
+        cached = _cache_get(key)
+        unchanged = (
+            not force_full
+            and cached is not None
+            and cached["sig"] == (total, head)
+            and total <= len(cached["raw"])
+        )
+        if not error and unchanged:
+            raw = cached["raw"]
+        elif not error and (force_full or total > len(raw)):
+            raw, error, total = fetch_brand(brand, day, status, max_pages=40, txn_type=txn_type)
+            head = str(raw[0].get("id") or "") if raw else ""
+        if not error:
+            _cache_put(key, {"sig": (total, head), "raw": raw})
     except requests.RequestException as exc:
-        return [], exc.__class__.__name__
+        error = exc.__class__.__name__
+        raw = []
     except ValueError:
-        return [], "The brand API did not return JSON"
+        error = "The brand API did not return JSON"
+        raw = []
+    if error in _TRANSIENT:
+        cached = _cache_get(key)
+        if cached and cached.get("raw"):
+            return list(cached["raw"]), ""
     return raw, error
+
+
+def _http() -> requests.Session:
+    session = getattr(_http_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        _http_local.session = session
+    return session
+
+
+def _reset_http() -> None:
+    session = getattr(_http_local, "session", None)
+    _http_local.session = None
+    if session is not None:
+        try:
+            session.close()
+        except requests.RequestException:
+            pass
+
+
+def _post(url: str, form: dict) -> requests.Response:
+    """Retry a dropped connection. Brand hosts close idle sockets without warning."""
+    last: requests.RequestException | None = None
+    for attempt in range(3):
+        try:
+            return _http().post(url, data=form, timeout=(5, 25))
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last = exc
+            _reset_http()
+            time.sleep(0.35 * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def fetch_brand(brand: Brand, day: str, status: str, max_pages: int, txn_type: str = "") -> tuple[list[dict], str, int]:
@@ -160,11 +222,7 @@ def fetch_brand(brand: Brand, day: str, status: str, max_pages: int, txn_type: s
         if txn_type:
             form["type"] = txn_type
             form["pageSize"] = "100"
-        response = requests.post(
-            url,
-            data=form,
-            timeout=20,
-        )
+        response = _post(url, form)
         body = response.json()
         if str(body.get("status") or "") != "SUCCESS":
             data = body.get("data") if isinstance(body.get("data"), dict) else {}
