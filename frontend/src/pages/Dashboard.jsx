@@ -184,8 +184,10 @@ export default function Dashboard() {
               <select value={status} onChange={(event) => setStatus(event.target.value)}>
                 <option>All statuses</option>
                 <option>PENDING</option>
+                <option>PROCESSING</option>
                 <option>COMPLETED</option>
                 <option>REJECTED</option>
+                <option>OTHER</option>
               </select>
             </label>
             <label>

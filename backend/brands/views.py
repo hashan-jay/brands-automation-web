@@ -85,7 +85,7 @@ def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, 
     if wanted_type != "All types":
         visible = [row for row in visible if row.get("type") == wanted_type]
     if wanted_status != "All statuses":
-        visible = [row for row in visible if row.get("status") == wanted_status]
+        visible = [row for row in visible if _matches_status(row, wanted_status)]
 
     total_rows = len(scoped)
     errors = [str(item.get("message") or "") for item in meta if item.get("message")]
@@ -161,6 +161,34 @@ def _latest_sync(meta: list[dict]):
     return latest
 
 
+def _matches_status(row: dict, wanted_status: str) -> bool:
+    if wanted_status == "OTHER":
+        return _stat_key(row) == "other"
+    return row.get("status") == wanted_status
+
+
+def _stat_key(row: dict) -> str:
+    status = row.get("status")
+    kind = row.get("type")
+    if status == "PENDING" and kind == "DEPOSIT":
+        return "pending_deposit"
+    if status == "PENDING" and kind == "WITHDRAW":
+        return "pending_withdraw"
+    if status == "PROCESSING":
+        return "processing"
+    if status == "REJECTED":
+        return "rejected"
+    if status == "COMPLETED" and kind == "DEPOSIT":
+        return "completed_deposit"
+    if status == "COMPLETED" and kind == "WITHDRAW":
+        return "completed_withdraw"
+    if kind == "BONUS":
+        return "bonus"
+    if kind == "FORFEITED":
+        return "forfeited"
+    return "other"
+
+
 def _stats_rows(rows: list[dict]) -> dict:
     keys = (
         "pending_deposit",
@@ -183,27 +211,7 @@ def _stats_rows(rows: list[dict]) -> dict:
             return
 
     for row in rows:
-        status = row.get("status")
-        kind = row.get("type")
-        amount = row.get("amount")
-        if status == "PENDING" and kind == "DEPOSIT":
-            add("pending_deposit", amount)
-        elif status == "PENDING" and kind == "WITHDRAW":
-            add("pending_withdraw", amount)
-        elif status == "PROCESSING":
-            add("processing", amount)
-        elif status == "REJECTED":
-            add("rejected", amount)
-        elif status == "COMPLETED" and kind == "DEPOSIT":
-            add("completed_deposit", amount)
-        elif status == "COMPLETED" and kind == "WITHDRAW":
-            add("completed_withdraw", amount)
-        elif kind == "BONUS":
-            add("bonus", amount)
-        elif kind == "FORFEITED":
-            add("forfeited", amount)
-        else:
-            add("other", amount)
+        add(_stat_key(row), row.get("amount"))
 
     stats = {key: {"count": count, "amount": f"{amount:.2f}"} for key, (count, amount) in totals.items()}
     net_amount = totals["completed_deposit"][1] + totals["completed_withdraw"][1]
