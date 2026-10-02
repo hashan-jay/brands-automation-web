@@ -99,6 +99,18 @@ def _collect_brand(brand: Brand, day: date) -> tuple[list[dict], list[str]]:
         if error:
             errors.append(f"{brand.name} COMPLETED {kind}: {error}")
         collected.extend(raw)
+    for status in ("COMPLETED", "PENDING", "REJECTED"):
+        raw, error = _read_typed(
+            brand,
+            day_text,
+            status,
+            "FORFEITED",
+            force_full=pending_changed,
+            max_pages=250,
+        )
+        if error:
+            errors.append(f"{brand.name} {status} FORFEITED: {error}")
+        collected.extend(raw)
     return collected, errors
 
 
@@ -138,7 +150,14 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
     return raw, error
 
 
-def _read_typed(brand: Brand, day: str, status: str, txn_type: str, force_full: bool = False) -> tuple[list[dict], str]:
+def _read_typed(
+    brand: Brand,
+    day: str,
+    status: str,
+    txn_type: str,
+    force_full: bool = False,
+    max_pages: int = 40,
+) -> tuple[list[dict], str]:
     """Completed deposits and withdrawals are paged separately so bank names are not cut off."""
     key = (brand.name, f"{status}:{txn_type}", day)
     try:
@@ -154,7 +173,7 @@ def _read_typed(brand: Brand, day: str, status: str, txn_type: str, force_full: 
         if not error and unchanged:
             raw = cached["raw"]
         elif not error and (force_full or total > len(raw)):
-            raw, error, total = fetch_brand(brand, day, status, max_pages=40, txn_type=txn_type)
+            raw, error, total = fetch_brand(brand, day, status, max_pages=max_pages, txn_type=txn_type)
             head = str(raw[0].get("id") or "") if raw else ""
         if not error:
             _cache_put(key, {"sig": (total, head), "raw": raw})

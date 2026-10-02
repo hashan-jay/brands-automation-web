@@ -162,6 +162,7 @@ export default function Dashboard() {
                 <option>DEPOSIT</option>
                 <option>WITHDRAW</option>
                 <option>BONUS</option>
+                <option>FORFEITED</option>
               </select>
             </label>
           </div>
@@ -229,5 +230,6 @@ function rowClass(row) {
   if (row.type === "DEPOSIT") return "deposit";
   if (row.type === "WITHDRAW") return "withdraw";
   if (row.type === "BONUS") return "bonus";
+  if (row.type === "FORFEITED") return "forfeited";
   return "";
 }

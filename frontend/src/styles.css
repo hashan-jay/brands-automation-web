@@ -166,6 +166,7 @@ th {
 tr.deposit td:nth-child(7) { color: #15803d; font-weight: 700; }
 tr.withdraw td:nth-child(7) { color: #b91c1c; font-weight: 700; }
 tr.bonus td:nth-child(7) { color: #1d4ed8; font-weight: 700; }
+tr.forfeited td:nth-child(7) { color: #7c3aed; font-weight: 700; }
 tr.pending { background: #fffbeb; }
 tr.pending td:nth-child(17) { color: #a16207; font-weight: 700; }
 tr.rejected td:nth-child(17) { color: #6b7280; font-weight: 700; }
