@@ -1,17 +1,16 @@
 import re
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
-from django.db.models import Count, Sum
-from django.db.models.functions import Left
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from brands.models import Brand, BrandSync, Transaction
+from brands import livecache
+from brands.models import Brand
 from brands.poller import note_watch, start_poller
-from brands.services import sync_day
+from brands.services import load_dashboard, sync_day
 
 
 class BrandListView(APIView):
@@ -32,79 +31,12 @@ class DashboardView(APIView):
         brand_name = str(request.query_params.get("brand") or "All")
         wanted_type = str(request.query_params.get("type") or "All types")
         wanted_status = str(request.query_params.get("status") or "All statuses")
-
-        scoped = Transaction.objects.select_related("brand").filter(txn_date=day)
-        if brand_name != "All":
-            scoped = scoped.filter(brand__name=brand_name)
-
-        stats = _stats(scoped)
-        total_rows = scoped.count()
-        visible = scoped
-        if wanted_type != "All types":
-            visible = visible.filter(type=wanted_type)
-        if wanted_status != "All statuses":
-            visible = visible.filter(status=wanted_status)
-        rows = [
-            item.display()
-            for item in visible.annotate(detail_short=Left("detail", 160))
-            .defer("detail")
-            .order_by("-created_at", "-external_id")
-        ]
-        rows.sort(key=lambda row: row["status"] != "PENDING")
-
-        syncs = BrandSync.objects.select_related("brand").filter(day=day)
-        if brand_name != "All":
-            syncs = syncs.filter(brand__name=brand_name)
-        errors = [item.message for item in syncs if item.message]
-        synced_at = syncs.order_by("-updated_at").values_list("updated_at", flat=True).first()
-        stamp = timezone.localtime(synced_at).strftime("%H:%M:%S") if synced_at else ""
-        refused_ip = _refused_ip(errors)
-        if refused_ip:
-            status_line = (
-                f"{stamp}  {total_rows} saved rows. "
-                f"The brand APIs refused this computer's address {refused_ip}."
-            ).strip()
-        elif errors and total_rows == 0:
-            status_line = (stamp + "  " + " ".join(errors[:3])).strip()
-        elif errors:
-            status_line = f"{stamp}  {total_rows} API rows. " + " ".join(errors[:2])
-        elif synced_at:
-            status_line = f"Live {stamp}  ·  {total_rows} API rows."
-        else:
-            status_line = "Connecting to the brand APIs."
-
-        if brand_name == "All":
-            names = list(
-                dict.fromkeys(
-                    Brand.objects.filter(pk__in=scoped.values("brand_id"))
-                    .order_by("sort_order")
-                    .values_list("name", flat=True)
-                )
-            )
-        else:
-            names = [brand_name]
-        if total_rows == 0:
-            brand_line = f"{brand_name}: the API returned no rows for this date."
-        else:
-            parts = []
-            for name in names:
-                brand_rows = scoped.filter(brand__name=name)
-                pending = brand_rows.filter(status="PENDING").count()
-                parts.append(f"{name}: {brand_rows.count()} rows, {pending} pending")
-            brand_line = "   ".join(parts)
-
-        return Response(
-            {
-                "date": day.isoformat(),
-                "brand": brand_name,
-                "rows": rows,
-                "stats": stats,
-                "brand_line": brand_line,
-                "status_line": status_line,
-                "errors": errors,
-                "synced_at": synced_at.isoformat() if synced_at else None,
-            }
-        )
+        client_rev = str(request.query_params.get("rev") or "")
+        if client_rev:
+            current = livecache.revision(day)
+            if current is not None and current == client_rev:
+                return _live_response({"unchanged": True, "revision": int(current)})
+        return _live_response(_dashboard_body(day, brand_name, wanted_type, wanted_status, load_dashboard(day)))
 
 
 class SyncView(APIView):
@@ -135,17 +67,112 @@ def _parse_day(value: object):
     return timezone.localdate()
 
 
-def _stats(scoped) -> dict:
+def _live_response(body: dict) -> Response:
+    response = Response(body)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, packed: dict) -> dict:
+    rows = packed.get("rows") or []
+    brands_meta = packed.get("brands") or []
+    if brand_name != "All":
+        scoped = [row for row in rows if row.get("brand") == brand_name]
+        meta = [item for item in brands_meta if item.get("name") == brand_name]
+    else:
+        scoped = list(rows)
+        meta = list(brands_meta)
+    visible = scoped
+    if wanted_type != "All types":
+        visible = [row for row in visible if row.get("type") == wanted_type]
+    if wanted_status != "All statuses":
+        visible = [row for row in visible if row.get("status") == wanted_status]
+
+    total_rows = len(scoped)
+    errors = [str(item.get("message") or "") for item in meta if item.get("message")]
+    synced_at = _latest_sync(meta)
+    stamp = timezone.localtime(synced_at).strftime("%H:%M:%S") if synced_at else ""
+    refused_ip = _refused_ip(errors)
+    if refused_ip:
+        status_line = (
+            f"{stamp}  {total_rows} saved rows. "
+            f"The brand APIs refused this computer's address {refused_ip}."
+        ).strip()
+    elif errors and total_rows == 0:
+        status_line = (stamp + "  " + " ".join(errors[:3])).strip()
+    elif errors:
+        status_line = f"{stamp}  {total_rows} API rows. " + " ".join(errors[:2])
+    elif synced_at:
+        status_line = f"Live {stamp}  ·  {total_rows} API rows."
+    else:
+        status_line = "Connecting to the brand APIs."
+
+    if brand_name == "All":
+        order = {item.get("name"): item.get("sort_order") or 0 for item in brands_meta}
+        names = sorted({row.get("brand") for row in scoped if row.get("brand")}, key=lambda name: (order.get(name, 0), name))
+    else:
+        names = [brand_name]
+    if total_rows == 0:
+        brand_line = f"{brand_name}: the API returned no rows for this date."
+    else:
+        totals: dict[str, int] = {}
+        pending: dict[str, int] = {}
+        for row in scoped:
+            name = row.get("brand") or ""
+            totals[name] = totals.get(name, 0) + 1
+            if row.get("status") == "PENDING":
+                pending[name] = pending.get(name, 0) + 1
+        brand_line = "   ".join(
+            f"{name}: {totals.get(name, 0)} rows, {pending.get(name, 0)} pending" for name in names
+        )
+
+    body = {
+        "date": day.isoformat(),
+        "brand": brand_name,
+        "rows": visible,
+        "stats": _stats_rows(scoped),
+        "brand_line": brand_line,
+        "status_line": status_line,
+        "errors": errors,
+        "synced_at": synced_at.isoformat() if synced_at else None,
+    }
+    revision = packed.get("revision")
+    if revision:
+        body["revision"] = int(revision)
+    return body
+
+
+def _latest_sync(meta: list[dict]):
+    latest = None
+    for item in meta:
+        text = str(item.get("updated_at") or "")
+        if not text:
+            continue
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            continue
+        if latest is None or parsed > latest:
+            latest = parsed
+    return latest
+
+
+def _stats_rows(rows: list[dict]) -> dict:
     pairs = (
         ("pending_deposit", "PENDING", "DEPOSIT"),
         ("pending_withdraw", "PENDING", "WITHDRAW"),
         ("completed_deposit", "COMPLETED", "DEPOSIT"),
         ("completed_withdraw", "COMPLETED", "WITHDRAW"),
     )
-    result = {}
-    for key, status, kind in pairs:
-        match = scoped.filter(status=status, type=kind)
-        total = match.aggregate(count=Count("id"), amount=Sum("amount"))
-        amount = total["amount"] if isinstance(total["amount"], Decimal) else Decimal("0")
-        result[key] = {"count": total["count"] or 0, "amount": f"{amount:.2f}"}
-    return result
+    totals = {key: [0, Decimal("0")] for key, _status, _kind in pairs}
+    lookup = {(status, kind): key for key, status, kind in pairs}
+    for row in rows:
+        key = lookup.get((row.get("status"), row.get("type")))
+        if not key:
+            continue
+        totals[key][0] += 1
+        try:
+            totals[key][1] += Decimal(str(row.get("amount") or "0"))
+        except (InvalidOperation, ValueError):
+            continue
+    return {key: {"count": count, "amount": f"{amount:.2f}"} for key, (count, amount) in totals.items()}

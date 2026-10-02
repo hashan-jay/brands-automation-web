@@ -25,6 +25,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django.middleware.gzip.GZipMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -96,3 +97,4 @@ else:
     ]
 
 BRANDS_POLL_SECONDS = int(os.getenv("BRANDS_POLL_SECONDS", "2"))
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")

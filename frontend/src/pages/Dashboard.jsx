@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 
 const COLUMNS = [
@@ -46,6 +46,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const revision = useRef("");
 
   useEffect(() => {
     api("/api/brands/")
@@ -56,19 +57,25 @@ export default function Dashboard() {
   useEffect(() => {
     let stopped = false;
     let timer = 0;
-
     let loading = false;
+    revision.current = "";
 
     async function load() {
       if (loading) return;
       loading = true;
       const params = new URLSearchParams({ date, brand, type, status });
+      if (revision.current) params.set("rev", revision.current);
       try {
         const next = await api(`/api/dashboard/?${params.toString()}`);
-        if (!stopped) {
-          setData(next);
+        if (stopped) return;
+        if (next?.unchanged) {
+          if (next.revision) revision.current = String(next.revision);
           setError("");
+          return;
         }
+        if (next?.revision) revision.current = String(next.revision);
+        setData(next);
+        setError("");
       } catch (err) {
         if (!stopped) setError(err.message);
       } finally {
@@ -77,7 +84,7 @@ export default function Dashboard() {
     }
 
     load();
-    if (live) timer = window.setInterval(load, 3000);
+    if (live) timer = window.setInterval(load, 1000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -90,7 +97,9 @@ export default function Dashboard() {
     try {
       await api("/api/sync/", { method: "POST", body: { date } });
       const params = new URLSearchParams({ date, brand, type, status });
-      setData(await api(`/api/dashboard/?${params.toString()}`));
+      const next = await api(`/api/dashboard/?${params.toString()}`);
+      if (next?.revision) revision.current = String(next.revision);
+      if (!next?.unchanged) setData(next);
     } catch (err) {
       setError(err.message);
     } finally {

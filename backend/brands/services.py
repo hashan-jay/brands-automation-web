@@ -1,9 +1,11 @@
 """Read each brand transaction API and store one row per transaction id."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
@@ -11,38 +13,61 @@ import requests
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
+from brands import livecache
 from brands.models import Brand, BrandSync, Transaction
 
 LIVE_STATUSES = ("PENDING", "COMPLETED", "REJECTED")
 _TAG_RE = re.compile(r"<span[^>]*>(.*?)</span>", re.I)
 _HTML_RE = re.compile(r"<[^>]+>")
 _lock = threading.Lock()
+_cache_lock = threading.Lock()
 _cache: dict[tuple[str, str, str], dict] = {}
 
 
-def sync_day(day: date) -> None:
-    with _lock:
+def sync_day(day: date, *, wait: bool = True) -> None:
+    acquired = _lock.acquire(blocking=wait)
+    if not acquired:
+        return
+    try:
         _sync_day(day)
+    finally:
+        _lock.release()
 
 
 def _sync_day(day: date) -> None:
     close_old_connections()
     try:
         brands = list(Brand.objects.filter(is_active=True))
-        for brand in brands:
-            rows, errors = _collect_brand(brand, day)
-            if rows:
-                _store_rows(brand, day, rows)
-            BrandSync.objects.update_or_create(
-                brand=brand,
-                day=day,
-                defaults={
-                    "message": " ".join(errors),
-                    "row_count": len(rows),
-                },
-            )
+        close_old_connections()
+        fetched = _fetch_brands(brands, day)
+        changed = False
+        for brand, rows, errors in fetched:
+            if rows and _store_rows(brand, day, rows):
+                changed = True
+            if _save_sync(brand, day, " ".join(errors), len(rows)):
+                changed = True
+        if changed or not livecache.has_snapshot(day):
+            publish_snapshot(day)
     finally:
         close_old_connections()
+
+
+def _fetch_brands(brands: list[Brand], day: date) -> list[tuple[Brand, list[dict], list[str]]]:
+    if not brands:
+        return []
+
+    def collect(brand: Brand) -> tuple[Brand, list[dict], list[str]]:
+        try:
+            rows, errors = _collect_brand(brand, day)
+            return brand, rows, errors
+        except Exception as exc:
+            return brand, [], [f"{brand.name}: {exc.__class__.__name__}"]
+        finally:
+            close_old_connections()
+
+    workers = min(8, len(brands))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="brand-fetch") as pool:
+        return list(pool.map(collect, brands))
 
 
 def _collect_brand(brand: Brand, day: date) -> tuple[list[dict], list[str]]:
@@ -54,7 +79,8 @@ def _collect_brand(brand: Brand, day: date) -> tuple[list[dict], list[str]]:
     errors: list[str] = []
     day_text = day.isoformat()
     pending_key = (brand.name, "PENDING", day_text)
-    previous_ids = _ids(_cache.get(pending_key, {}).get("raw", []))
+    previous = _cache_get(pending_key)
+    previous_ids = _ids(previous.get("raw", []) if previous else [])
     pending_raw, pending_error = _read_status(brand, day_text, "PENDING", force_full=True)
     if pending_error:
         errors.append(f"{brand.name} PENDING: {pending_error}")
@@ -79,11 +105,11 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
         if status == "PENDING":
             raw, error, total = fetch_brand(brand, day, status, max_pages=10)
             if not error:
-                _cache[key] = {"sig": (total, ""), "raw": raw}
+                _cache_put(key, {"sig": (total, ""), "raw": raw})
         else:
             raw, error, total = fetch_brand(brand, day, status, max_pages=1)
             head = str(raw[0].get("id") or "") if raw else ""
-            cached = _cache.get(key)
+            cached = _cache_get(key)
             unchanged = cached and cached["sig"] == (total, head) and total <= len(cached["raw"])
             if not error and not force_full and unchanged:
                 raw = cached["raw"]
@@ -91,15 +117,17 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
                 raw, error, total = fetch_brand(brand, day, status, max_pages=40)
                 head = str(raw[0].get("id") or "") if raw else ""
             if not error:
-                _cache[key] = {"sig": (total, head), "raw": raw}
+                _cache_put(key, {"sig": (total, head), "raw": raw})
     except requests.RequestException as exc:
         error = exc.__class__.__name__
         raw = []
     except ValueError:
         error = "The brand API did not return JSON"
         raw = []
-    if error and key in _cache:
-        raw = _cache[key]["raw"]
+    if error:
+        cached = _cache_get(key)
+        if cached:
+            raw = cached["raw"]
     return raw, error
 
 
@@ -153,7 +181,7 @@ def fetch_brand(brand: Brand, day: str, status: str, max_pages: int, txn_type: s
     return rows, "", total
 
 
-def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
+def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> bool:
     prepared = []
     for raw in raw_rows:
         external_id = str(raw.get("id") or "").strip()
@@ -190,8 +218,12 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
             )
         )
     if not prepared:
-        return
+        return False
     prepared = list({item.external_id: item for item in prepared}.values())
+    signature = _signature(prepared)
+    signature_key = f"brands:sig:{brand.pk}:{day.isoformat()}"
+    if livecache.same(signature_key, signature):
+        return False
     with transaction.atomic():
         Transaction.objects.bulk_create(
             prepared,
@@ -217,6 +249,8 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
                 "processed_at",
             ],
         )
+    livecache.store(signature_key, signature)
+    return True
 
 
 def _selected_bank_name(raw: dict) -> str:
@@ -294,3 +328,100 @@ def _ids(raw: object) -> set[str]:
     if not isinstance(raw, list):
         return set()
     return {str(item.get("id") or "") for item in raw if isinstance(item, dict) and item.get("id")}
+
+
+def _cache_get(key: tuple[str, str, str]) -> dict | None:
+    with _cache_lock:
+        return _cache.get(key)
+
+
+def _cache_put(key: tuple[str, str, str], value: dict) -> None:
+    with _cache_lock:
+        _cache[key] = value
+
+
+def _signature(prepared: list[Transaction]) -> str:
+    lines = []
+    for item in sorted(prepared, key=lambda txn: txn.external_id):
+        created = item.created_at.isoformat() if item.created_at else ""
+        processed = item.processed_at.isoformat() if item.processed_at else ""
+        lines.append(
+            "|".join(
+                (
+                    item.external_id,
+                    item.status,
+                    item.type,
+                    format(item.amount, "f"),
+                    item.username,
+                    item.player_name,
+                    item.mobile,
+                    item.bank,
+                    item.bank_name,
+                    item.acc_name,
+                    item.acc_no,
+                    item.bsb,
+                    item.pay_id,
+                    item.method,
+                    item.detail,
+                    created,
+                    processed,
+                )
+            )
+        )
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def _save_sync(brand: Brand, day: date, message: str, row_count: int) -> bool:
+    state = f"{row_count}\n{message}"
+    key = f"brands:sync:{brand.pk}:{day.isoformat()}"
+    if livecache.same(key, state):
+        return False
+    BrandSync.objects.update_or_create(
+        brand=brand,
+        day=day,
+        defaults={"message": message, "row_count": row_count},
+    )
+    livecache.store(key, state)
+    return True
+
+
+def load_dashboard(day: date) -> dict:
+    packed = livecache.snapshot(day)
+    if packed is not None:
+        return packed
+    return publish_snapshot(day)
+
+
+def publish_snapshot(day: date) -> dict:
+    marker = timezone.now().isoformat()
+    rows, brands = _read_day(day)
+    livecache.publish(day, rows, brands, marker)
+    fresh = livecache.snapshot(day)
+    if fresh is not None:
+        return fresh
+    return {"rows": rows, "brands": brands, "revision": None}
+
+
+def _read_day(day: date) -> tuple[list[dict], list[dict]]:
+    queryset = (
+        Transaction.objects.select_related("brand")
+        .filter(txn_date=day)
+        .order_by("-created_at", "-external_id")
+    )
+    rows = [item.display() for item in queryset]
+    rows.sort(key=lambda row: row["status"] != "PENDING")
+    syncs = {item.brand_id: item for item in BrandSync.objects.select_related("brand").filter(day=day)}
+    brands = []
+    for brand in Brand.objects.filter(is_active=True).order_by("sort_order", "name"):
+        sync = syncs.get(brand.id)
+        updated = sync.updated_at if sync else None
+        brands.append(
+            {
+                "name": brand.name,
+                "sort_order": brand.sort_order,
+                "message": sync.message if sync else "",
+                "row_count": sync.row_count if sync else 0,
+                "updated_at": updated.isoformat() if updated else None,
+            }
+        )
+    return rows, brands

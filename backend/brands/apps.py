@@ -11,7 +11,8 @@ class BrandsConfig(AppConfig):
     def ready(self) -> None:
         if "runserver" not in sys.argv:
             return
-        if os.environ.get("RUN_MAIN") != "true":
+        # The autoreloader parent must not start a second poller. --noreload has no child process.
+        if os.environ.get("RUN_MAIN") != "true" and "--noreload" not in sys.argv:
             return
         from brands.poller import start_poller
 

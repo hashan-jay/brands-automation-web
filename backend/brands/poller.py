@@ -1,6 +1,7 @@
 """Keep today's transactions current, plus any date a signed-in user is viewing."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import date
@@ -8,7 +9,10 @@ from datetime import date
 from django.conf import settings
 from django.utils import timezone
 
+from brands import livecache
 from brands.services import sync_day
+
+log = logging.getLogger("django")
 
 _started = False
 _guard = threading.Lock()
@@ -36,6 +40,8 @@ def start_poller() -> None:
         if _started:
             return
         _started = True
+    if not livecache.ping():
+        log.warning("Redis is not reachable at %s. Live reads will use Postgres until it is.", settings.REDIS_URL)
     thread = threading.Thread(target=_loop, name="brand-poller", daemon=True)
     thread.start()
 
@@ -45,7 +51,7 @@ def _loop() -> None:
     while True:
         for day in sorted(active_dates()):
             try:
-                sync_day(day)
+                sync_day(day, wait=False)
             except Exception:
                 # The next pass retries. BrandSync stores API errors separately.
                 pass
