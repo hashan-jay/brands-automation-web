@@ -22,12 +22,32 @@ const COLUMNS = [
   ["detail", "Detail"],
 ];
 
+const EMPTY_BUCKET = { count: 0, amount: "0.00" };
+
 const EMPTY_STATS = {
-  pending_deposit: { count: 0, amount: "0.00" },
-  pending_withdraw: { count: 0, amount: "0.00" },
-  completed_deposit: { count: 0, amount: "0.00" },
-  completed_withdraw: { count: 0, amount: "0.00" },
+  pending_deposit: EMPTY_BUCKET,
+  pending_withdraw: EMPTY_BUCKET,
+  completed_deposit: EMPTY_BUCKET,
+  completed_withdraw: EMPTY_BUCKET,
+  bonus: EMPTY_BUCKET,
+  forfeited: EMPTY_BUCKET,
+  processing: EMPTY_BUCKET,
+  rejected: EMPTY_BUCKET,
+  other: EMPTY_BUCKET,
+  net_completed: EMPTY_BUCKET,
+  row_count: EMPTY_BUCKET,
 };
+
+const WIDGETS = [
+  ["pending_deposit", "Pending deposits", "pending-in"],
+  ["pending_withdraw", "Pending withdrawals", "pending-out"],
+  ["completed_deposit", "Completed deposits", "done-in"],
+  ["completed_withdraw", "Completed withdrawals", "done-out"],
+  ["bonus", "Bonus", "bonus"],
+  ["forfeited", "Forfeited", "forfeited"],
+  ["processing", "Processing", "processing"],
+  ["rejected", "Rejected", "rejected"],
+];
 
 function today() {
   const now = new Date();
@@ -109,12 +129,9 @@ export default function Dashboard() {
 
   const stats = data?.stats || EMPTY_STATS;
   const rows = data?.rows || [];
-  const cards = [
-    ["pending_deposit", "Pending deposits"],
-    ["pending_withdraw", "Pending withdrawals"],
-    ["completed_deposit", "Completed deposits"],
-    ["completed_withdraw", "Completed withdrawals"],
-  ];
+  if (data?.stats && data.stats.row_count == null) revision.current = "";
+  const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other"]] : WIDGETS;
+  const brandSummary = data?.brand_summary || [];
 
   return (
     <div className="workspace">
@@ -199,22 +216,64 @@ export default function Dashboard() {
         </div>
 
         <div className="stats">
-          <h3>Statistics · {brand}</h3>
-          <div className="cards">
-            {cards.map(([key, title]) => (
-              <article key={key}>
-                <span>{title}</span>
-                <strong>
-                  {stats[key].count} · {Number(stats[key].amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </strong>
-              </article>
-            ))}
+          <div className="stats-head">
+            <div>
+              <h3>Statistics</h3>
+              <p>
+                {brand} · {date} · {Number(bucket(stats, "row_count").count).toLocaleString()} transactions
+              </p>
+            </div>
+            <div className="stats-net">
+              <span>Net completed</span>
+              <strong className={amountTone(bucket(stats, "net_completed").amount)}>
+                {money(bucket(stats, "net_completed").amount)}
+              </strong>
+              <span>{Number(bucket(stats, "net_completed").count).toLocaleString()} deposits and withdrawals</span>
+            </div>
           </div>
-          <p>{data?.brand_line || "Waiting for the first API response."}</p>
+          <div className="widgets">
+            {widgets.map(([key, title, tone]) => {
+              const item = bucket(stats, key);
+              return (
+                <article key={key} className={`widget ${tone}`}>
+                  <span className="widget-label">{title}</span>
+                  <strong className={`widget-amount ${amountTone(item.amount)}`}>{money(item.amount)}</strong>
+                  <span className="widget-count">{Number(item.count).toLocaleString()} transactions</span>
+                </article>
+              );
+            })}
+          </div>
+          {brandSummary.length > 1 && (
+            <div className="brand-chips">
+              {brandSummary.map((item) => (
+                <span key={item.name} className="brand-chip">
+                  <strong>{item.name}</strong>
+                  <span>{Number(item.rows).toLocaleString()} rows</span>
+                  <span className={item.pending ? "chip-pending" : ""}>{Number(item.pending).toLocaleString()} pending</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </section>
     </div>
   );
+}
+
+function bucket(stats, key) {
+  return stats[key] || EMPTY_BUCKET;
+}
+
+function money(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "0.00";
+  return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function amountTone(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount === 0) return "flat";
+  return amount > 0 ? "up" : "down";
 }
 
 function statusText(live, refreshing, data) {

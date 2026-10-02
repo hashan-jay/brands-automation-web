@@ -137,7 +137,7 @@ input, select {
 
 .table-wrap {
   overflow: auto;
-  max-height: calc(100vh - 360px);
+  max-height: calc(100vh - 520px);
   border: 1px solid #e2e8f0;
   border-radius: 8px;
 }
@@ -175,28 +175,126 @@ td.bank-name { font-weight: 700; color: #0f2744; }
 .empty { color: #5b6b7c; text-align: center; padding: 24px; }
 
 .stats {
-  margin-top: 10px;
+  margin-top: 12px;
   background: #f4f7fb;
-  border-radius: 10px;
-  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 14px;
 }
 
-.cards {
+.stats-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.stats-head p, .stats-net span {
+  margin: 2px 0 0;
+  color: #5b6b7c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stats-net { text-align: right; }
+.stats-net span { display: block; }
+.stats-net strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.widgets {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin: 8px 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.cards article {
+.widget {
+  position: relative;
+  overflow: hidden;
   background: #fff;
-  border: 1px solid #d6dee8;
-  border-radius: 8px;
-  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px 12px 16px;
+  box-shadow: 0 1px 2px rgba(15, 39, 68, 0.05);
 }
 
-.cards span { display: block; color: #5b6b7c; font-size: 12px; }
-.cards strong { color: #0f2744; }
+.widget::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent, #94a3b8);
+}
+
+.widget.pending-in { --accent: #d97706; }
+.widget.pending-out { --accent: #c2410c; }
+.widget.done-in { --accent: #15803d; }
+.widget.done-out { --accent: #b91c1c; }
+.widget.bonus { --accent: #1d4ed8; }
+.widget.forfeited { --accent: #7c3aed; }
+.widget.processing { --accent: #0f766e; }
+.widget.rejected { --accent: #64748b; }
+.widget.other { --accent: #0f2744; }
+
+.widget-label {
+  display: block;
+  color: #5b6b7c;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.widget-amount {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+.widget-amount.up { color: #15803d; }
+.widget-amount.down { color: #b91c1c; }
+.widget-amount.flat { color: #0f2744; }
+
+.widget-count {
+  display: block;
+  margin-top: 6px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.brand-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.brand-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.brand-chip strong { color: #0f2744; }
+.chip-pending { color: #a16207; }
 
 .form-error {
   color: #b91c1c;
@@ -215,8 +313,18 @@ td.bank-name { font-weight: 700; color: #0f2744; }
 
 .check { flex-direction: row; align-items: center; font-weight: 600; }
 
+@media (max-width: 1100px) {
+  .widgets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 900px) {
-  .workspace, .users, .cards { grid-template-columns: minmax(0, 1fr); }
+  .workspace, .users { grid-template-columns: minmax(0, 1fr); }
   .topbar { align-items: flex-start; flex-direction: column; }
+  .stats-head { align-items: flex-start; flex-direction: column; }
+  .stats-net { text-align: left; }
   .table-wrap { max-height: 60vh; }
+}
+
+@media (max-width: 640px) {
+  .widgets { grid-template-columns: minmax(0, 1fr); }
 }

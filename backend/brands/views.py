@@ -112,18 +112,22 @@ def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, 
         names = sorted({row.get("brand") for row in scoped if row.get("brand")}, key=lambda name: (order.get(name, 0), name))
     else:
         names = [brand_name]
+    totals: dict[str, int] = {}
+    pending: dict[str, int] = {}
+    for row in scoped:
+        name = row.get("brand") or ""
+        totals[name] = totals.get(name, 0) + 1
+        if row.get("status") == "PENDING":
+            pending[name] = pending.get(name, 0) + 1
     if total_rows == 0:
         brand_line = f"{brand_name}: the API returned no rows for this date."
+        brand_summary = [{"name": brand_name, "rows": 0, "pending": 0}] if brand_name != "All" else []
     else:
-        totals: dict[str, int] = {}
-        pending: dict[str, int] = {}
-        for row in scoped:
-            name = row.get("brand") or ""
-            totals[name] = totals.get(name, 0) + 1
-            if row.get("status") == "PENDING":
-                pending[name] = pending.get(name, 0) + 1
+        brand_summary = [
+            {"name": name, "rows": totals.get(name, 0), "pending": pending.get(name, 0)} for name in names
+        ]
         brand_line = "   ".join(
-            f"{name}: {totals.get(name, 0)} rows, {pending.get(name, 0)} pending" for name in names
+            f"{item['name']}: {item['rows']} rows, {item['pending']} pending" for item in brand_summary
         )
 
     body = {
@@ -131,6 +135,7 @@ def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, 
         "brand": brand_name,
         "rows": visible,
         "stats": _stats_rows(scoped),
+        "brand_summary": brand_summary,
         "brand_line": brand_line,
         "status_line": status_line,
         "errors": errors,
@@ -158,21 +163,52 @@ def _latest_sync(meta: list[dict]):
 
 
 def _stats_rows(rows: list[dict]) -> dict:
-    pairs = (
-        ("pending_deposit", "PENDING", "DEPOSIT"),
-        ("pending_withdraw", "PENDING", "WITHDRAW"),
-        ("completed_deposit", "COMPLETED", "DEPOSIT"),
-        ("completed_withdraw", "COMPLETED", "WITHDRAW"),
+    keys = (
+        "pending_deposit",
+        "pending_withdraw",
+        "completed_deposit",
+        "completed_withdraw",
+        "bonus",
+        "forfeited",
+        "processing",
+        "rejected",
+        "other",
     )
-    totals = {key: [0, Decimal("0")] for key, _status, _kind in pairs}
-    lookup = {(status, kind): key for key, status, kind in pairs}
-    for row in rows:
-        key = lookup.get((row.get("status"), row.get("type")))
-        if not key:
-            continue
+    totals = {key: [0, Decimal("0")] for key in keys}
+
+    def add(key: str, amount_text: object) -> None:
         totals[key][0] += 1
         try:
-            totals[key][1] += Decimal(str(row.get("amount") or "0"))
+            totals[key][1] += Decimal(str(amount_text or "0"))
         except (InvalidOperation, ValueError):
-            continue
-    return {key: {"count": count, "amount": f"{amount:.2f}"} for key, (count, amount) in totals.items()}
+            return
+
+    for row in rows:
+        status = row.get("status")
+        kind = row.get("type")
+        amount = row.get("amount")
+        if status == "PENDING" and kind == "DEPOSIT":
+            add("pending_deposit", amount)
+        elif status == "PENDING" and kind == "WITHDRAW":
+            add("pending_withdraw", amount)
+        elif status == "PROCESSING":
+            add("processing", amount)
+        elif status == "REJECTED":
+            add("rejected", amount)
+        elif status == "COMPLETED" and kind == "DEPOSIT":
+            add("completed_deposit", amount)
+        elif status == "COMPLETED" and kind == "WITHDRAW":
+            add("completed_withdraw", amount)
+        elif kind == "BONUS":
+            add("bonus", amount)
+        elif kind == "FORFEITED":
+            add("forfeited", amount)
+        else:
+            add("other", amount)
+
+    stats = {key: {"count": count, "amount": f"{amount:.2f}"} for key, (count, amount) in totals.items()}
+    net_amount = totals["completed_deposit"][1] + totals["completed_withdraw"][1]
+    net_count = totals["completed_deposit"][0] + totals["completed_withdraw"][0]
+    stats["net_completed"] = {"count": net_count, "amount": f"{net_amount:.2f}"}
+    stats["row_count"] = {"count": len(rows), "amount": "0.00"}
+    return stats
