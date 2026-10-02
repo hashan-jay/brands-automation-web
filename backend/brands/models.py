@@ -66,7 +66,7 @@ class Transaction(models.Model):
             "created": _clock(self.created_at),
             "processed": _clock(self.processed_at),
             "status": self.status,
-            "detail": self.detail,
+            "detail": str(getattr(self, "detail_short", None) or self.detail or "")[:160],
         }
 
 

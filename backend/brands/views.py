@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.db.models import Count, Sum
+from django.db.models.functions import Left
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -43,7 +44,12 @@ class DashboardView(APIView):
             visible = visible.filter(type=wanted_type)
         if wanted_status != "All statuses":
             visible = visible.filter(status=wanted_status)
-        rows = [item.display() for item in visible.order_by("-created_at", "-external_id")]
+        rows = [
+            item.display()
+            for item in visible.annotate(detail_short=Left("detail", 160))
+            .defer("detail")
+            .order_by("-created_at", "-external_id")
+        ]
         rows.sort(key=lambda row: row["status"] != "PENDING")
 
         syncs = BrandSync.objects.select_related("brand").filter(day=day)

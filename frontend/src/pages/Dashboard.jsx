@@ -57,7 +57,11 @@ export default function Dashboard() {
     let stopped = false;
     let timer = 0;
 
+    let loading = false;
+
     async function load() {
+      if (loading) return;
+      loading = true;
       const params = new URLSearchParams({ date, brand, type, status });
       try {
         const next = await api(`/api/dashboard/?${params.toString()}`);
@@ -67,11 +71,13 @@ export default function Dashboard() {
         }
       } catch (err) {
         if (!stopped) setError(err.message);
+      } finally {
+        loading = false;
       }
     }
 
     load();
-    if (live) timer = window.setInterval(load, 1000);
+    if (live) timer = window.setInterval(load, 3000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -172,7 +178,9 @@ export default function Dashboard() {
               {rows.map((row) => (
                 <tr key={`${row.brand}-${row.id}`} className={rowClass(row)}>
                   {COLUMNS.map(([key]) => (
-                    <td key={key}>{row[key]}</td>
+                    <td key={key} className={key === "bank_name" && row[key] ? "bank-name" : undefined}>
+                      {row[key]}
+                    </td>
                   ))}
                 </tr>
               ))}
