@@ -29,6 +29,7 @@ class Transaction(models.Model):
     mobile = models.CharField(max_length=64, blank=True)
     bank = models.CharField(max_length=128, blank=True)
     bank_name = models.CharField(max_length=128, blank=True)
+    bank_account_name = models.CharField(max_length=255, blank=True)
     acc_name = models.CharField(max_length=255, blank=True)
     acc_no = models.CharField(max_length=64, blank=True)
     bsb = models.CharField(max_length=32, blank=True)
@@ -57,6 +58,7 @@ class Transaction(models.Model):
             "amount": f"{self.amount:.2f}",
             "type": self.type,
             "bank_name": self.bank_name if self.status == "COMPLETED" and self.type in {"DEPOSIT", "WITHDRAW"} else "",
+            "bank_account_name": self.bank_account_name if self.status == "COMPLETED" and self.type in {"DEPOSIT", "WITHDRAW"} else "",
             "bank": self.bank,
             "acc_name": self.acc_name,
             "acc_no": self.acc_no,
@@ -81,6 +83,17 @@ class BrandSync(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["brand", "day"], name="uniq_brand_sync_day"),
         ]
+
+
+class CompanyBank(models.Model):
+    """Organization bank account shared across brands, keyed by the brand API bank id."""
+
+    external_id = models.CharField(max_length=32, unique=True)
+    bank_name = models.CharField(max_length=128, blank=True)
+    account_name = models.CharField(max_length=255, blank=True)
+
+    def __str__(self) -> str:
+        return self.account_name or self.external_id
 
 
 def _clock(value) -> str:

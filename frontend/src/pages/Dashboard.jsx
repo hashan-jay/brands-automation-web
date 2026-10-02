@@ -10,6 +10,7 @@ const COLUMNS = [
   ["amount", "Amount"],
   ["type", "Type"],
   ["bank_name", "Bank Name"],
+  ["bank_account_name", "Bank Account Name"],
   ["bank", "Bank"],
   ["acc_name", "Acc Name"],
   ["acc_no", "Acc No"],
@@ -205,7 +206,16 @@ export default function Dashboard() {
               {rows.map((row) => (
                 <tr key={`${row.brand}-${row.id}`} className={rowClass(row)}>
                   {COLUMNS.map(([key]) => (
-                    <td key={key} className={key === "bank_name" && row[key] ? "bank-name" : undefined}>
+                    <td
+                      key={key}
+                      className={
+                        key === "bank_name" && row[key]
+                          ? "bank-name"
+                          : key === "bank_account_name" && row[key]
+                            ? "bank-account"
+                            : undefined
+                      }
+                    >
                       {row[key]}
                     </td>
                   ))}

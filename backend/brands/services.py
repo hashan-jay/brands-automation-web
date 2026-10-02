@@ -15,7 +15,7 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from brands import livecache
-from brands.models import Brand, BrandSync, Transaction
+from brands.models import Brand, BrandSync, CompanyBank, Transaction
 
 LIVE_STATUSES = ("PENDING", "COMPLETED", "REJECTED")
 _TAG_RE = re.compile(r"<span[^>]*>(.*?)</span>", re.I)
@@ -43,9 +43,15 @@ def _sync_day(day: date) -> None:
         brands = list(Brand.objects.filter(is_active=True))
         close_old_connections()
         fetched = _fetch_brands(brands, day)
+        harvested: dict[str, tuple[str, str]] = {}
+        for _brand, rows, _errors in fetched:
+            harvested.update(_harvest_banks(rows))
+        if harvested:
+            _save_company_banks(harvested)
+        catalog = {item.external_id: item.account_name for item in CompanyBank.objects.all()}
         changed = False
         for brand, rows, errors in fetched:
-            if rows and _store_rows(brand, day, rows):
+            if rows and _store_rows(brand, day, rows, catalog):
                 changed = True
             if _save_sync(brand, day, " ".join(errors), len(rows)):
                 changed = True
@@ -258,7 +264,7 @@ def fetch_brand(brand: Brand, day: str, status: str, max_pages: int, txn_type: s
     return rows, "", total
 
 
-def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> bool:
+def _store_rows(brand: Brand, day: date, raw_rows: list[dict], catalog: dict[str, str] | None = None) -> bool:
     prepared = []
     for raw in raw_rows:
         external_id = str(raw.get("id") or "").strip()
@@ -284,6 +290,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> bool:
                 mobile=str(user.get("mobile") or "")[:64],
                 bank=str(bank.get("bank") or "")[:128],
                 bank_name=_selected_bank_name(raw),
+                bank_account_name=_bank_account_name(raw, catalog or {}),
                 acc_name=str(bank.get("bankAccountName") or "")[:255],
                 acc_no=str(bank.get("bankAccountNumber") or "")[:64],
                 bsb=str(bank.get("bankBSB") or "")[:32],
@@ -316,6 +323,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> bool:
                 "mobile",
                 "bank",
                 "bank_name",
+                "bank_account_name",
                 "acc_name",
                 "acc_no",
                 "bsb",
@@ -345,6 +353,61 @@ def _selected_bank_name(raw: dict) -> str:
     if not isinstance(details, dict):
         return ""
     return str(details.get("bank") or "")[:128]
+
+
+def _clean_label(value: object) -> str:
+    return " ".join(str(value or "").replace("\xa0", " ").split())
+
+
+def _org_bank(raw: dict) -> dict:
+    bank = raw.get("bank")
+    if isinstance(bank, str):
+        bank = _bank(bank)
+    return bank if isinstance(bank, dict) else {}
+
+
+def _harvest_banks(raw_rows: list[dict]) -> dict[str, tuple[str, str]]:
+    """Bank id -> (bank code, organization account name) from rows that include the account."""
+    found: dict[str, tuple[str, str]] = {}
+    for raw in raw_rows:
+        if str(raw.get("status") or "") != "COMPLETED":
+            continue
+        if str(raw.get("type") or "") not in {"DEPOSIT", "WITHDRAW"}:
+            continue
+        bank = _org_bank(raw)
+        account_name = _clean_label(bank.get("accountName"))
+        bank_id = str(bank.get("id") or raw.get("bankId") or "").strip()
+        if not account_name or not bank_id or bank_id in {"0", "None"}:
+            continue
+        found[bank_id] = (str(bank.get("bankName") or "")[:128], account_name[:255])
+    return found
+
+
+def _save_company_banks(found: dict[str, tuple[str, str]]) -> None:
+    CompanyBank.objects.bulk_create(
+        [
+            CompanyBank(external_id=bank_id, bank_name=bank_name, account_name=account_name)
+            for bank_id, (bank_name, account_name) in found.items()
+        ],
+        update_conflicts=True,
+        unique_fields=["external_id"],
+        update_fields=["bank_name", "account_name"],
+    )
+
+
+def _bank_account_name(raw: dict, catalog: dict[str, str]) -> str:
+    """Organization account that received a deposit or paid a withdrawal."""
+    if str(raw.get("status") or "") != "COMPLETED":
+        return ""
+    if str(raw.get("type") or "") not in {"DEPOSIT", "WITHDRAW"}:
+        return ""
+    account_name = _clean_label(_org_bank(raw).get("accountName"))
+    if account_name:
+        return account_name[:255]
+    bank_id = str(raw.get("bankId") or "").strip()
+    if not bank_id or bank_id in {"0", "None"}:
+        return ""
+    return str(catalog.get(bank_id) or "")[:255]
 
 
 def _bank(value: object) -> dict:
@@ -434,6 +497,7 @@ def _signature(prepared: list[Transaction]) -> str:
                     item.mobile,
                     item.bank,
                     item.bank_name,
+                    item.bank_account_name,
                     item.acc_name,
                     item.acc_no,
                     item.bsb,
