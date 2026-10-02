@@ -66,6 +66,8 @@ button {
   gap: 10px;
 }
 
+.filters { flex-wrap: wrap; justify-content: flex-end; }
+
 .who { color: #c5d4e8; }
 
 .ghost, .primary, .live {

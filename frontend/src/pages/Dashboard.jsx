@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 
 const COLUMNS = [
@@ -39,6 +39,13 @@ const EMPTY_STATS = {
   row_count: EMPTY_BUCKET,
 };
 
+const SORTS = [
+  "Sort by Time",
+  "Sort by Received Time",
+  "Sort by Alphabetical Order",
+  "Sort by Amount",
+];
+
 const WIDGETS = [
   ["pending_deposit", "Pending deposits", "pending-in"],
   ["pending_withdraw", "Pending withdrawals", "pending-out"],
@@ -63,6 +70,7 @@ export default function Dashboard() {
   const [date, setDate] = useState(today);
   const [type, setType] = useState("All types");
   const [status, setStatus] = useState("All statuses");
+  const [sortBy, setSortBy] = useState("Sort by Time");
   const [live, setLive] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -129,7 +137,7 @@ export default function Dashboard() {
   }
 
   const stats = data?.stats || EMPTY_STATS;
-  const rows = data?.rows || [];
+  const rows = useMemo(() => sortRows(data?.rows || [], sortBy), [data, sortBy]);
   if (data?.stats && data.stats.row_count == null) revision.current = "";
   const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other"]] : WIDGETS;
   const brandSummary = data?.brand_summary || [];
@@ -164,6 +172,14 @@ export default function Dashboard() {
         <div className="toolbar">
           <h2>Transactions</h2>
           <div className="filters">
+            <label>
+              Sort by
+              <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                {SORTS.map((option) => (
+                  <option key={option}>{option}</option>
+                ))}
+              </select>
+            </label>
             <label>
               Status
               <select value={status} onChange={(event) => setStatus(event.target.value)}>
@@ -268,6 +284,55 @@ export default function Dashboard() {
       </section>
     </div>
   );
+}
+
+function stamp(value) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  const parsed = Date.parse(text.replace(" ", "T"));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function receivedStamp(row) {
+  return stamp(row.processed) || stamp(row.time);
+}
+
+function sortRows(rows, sortBy) {
+  const next = [...rows];
+  next.sort((left, right) => {
+    if (sortBy === "Sort by Received Time") {
+      return receivedStamp(right) - receivedStamp(left) || stamp(right.time) - stamp(left.time) || compareText(right.id, left.id);
+    }
+    if (sortBy === "Sort by Alphabetical Order") {
+      const byName = compareName(left.name, right.name);
+      if (byName) return byName;
+      return stamp(right.time) - stamp(left.time);
+    }
+    if (sortBy === "Sort by Amount") {
+      const byAmount = amountValue(left) - amountValue(right);
+      if (byAmount) return byAmount;
+      return compareName(left.name, right.name);
+    }
+    return stamp(right.time) - stamp(left.time) || compareText(right.id, left.id);
+  });
+  return next;
+}
+
+function amountValue(row) {
+  const value = Number(row.amount);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareName(left, right) {
+  const a = String(left || "").trim();
+  const b = String(right || "").trim();
+  if (!a && b) return 1;
+  if (a && !b) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+function compareText(left, right) {
+  return String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base", numeric: true });
 }
 
 function bucket(stats, key) {
