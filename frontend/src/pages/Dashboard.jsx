@@ -9,6 +9,7 @@ const COLUMNS = [
   ["mobile", "Mobile"],
   ["amount", "Amount"],
   ["type", "Type"],
+  ["bank_name", "Bank Name"],
   ["bank", "Bank"],
   ["acc_name", "Acc Name"],
   ["acc_no", "Acc No"],

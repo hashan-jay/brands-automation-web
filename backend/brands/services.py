@@ -65,6 +65,11 @@ def _collect_brand(brand: Brand, day: date) -> tuple[list[dict], list[str]]:
         if error:
             errors.append(f"{brand.name} {status}: {error}")
         collected.extend(raw)
+    for kind in ("DEPOSIT", "WITHDRAW"):
+        raw, error = _read_typed(brand, day_text, "COMPLETED", kind)
+        if error:
+            errors.append(f"{brand.name} COMPLETED {kind}: {error}")
+        collected.extend(raw)
     return collected, errors
 
 
@@ -98,24 +103,38 @@ def _read_status(brand: Brand, day: str, status: str, force_full: bool = False) 
     return raw, error
 
 
-def fetch_brand(brand: Brand, day: str, status: str, max_pages: int) -> tuple[list[dict], str, int]:
+def _read_typed(brand: Brand, day: str, status: str, txn_type: str) -> tuple[list[dict], str]:
+    try:
+        raw, error, _total = fetch_brand(brand, day, status, max_pages=40, txn_type=txn_type)
+    except requests.RequestException as exc:
+        return [], exc.__class__.__name__
+    except ValueError:
+        return [], "The brand API did not return JSON"
+    return raw, error
+
+
+def fetch_brand(brand: Brand, day: str, status: str, max_pages: int, txn_type: str = "") -> tuple[list[dict], str, int]:
     url = brand.domain.rstrip("/") + "/api/v1/index.php"
     rows: list[dict] = []
     total = 0
     page = 0
     while page < max_pages:
+        form = {
+            "module": "/transactions/getAllTransactions",
+            "accessId": brand.access_id,
+            "accessToken": brand.token,
+            "merchantId": brand.merchant_id,
+            "pageIndex": str(page),
+            "status": status,
+            "sDate": f"{day} 00:00:00",
+            "eDate": f"{day} 23:59:59",
+        }
+        if txn_type:
+            form["type"] = txn_type
+            form["pageSize"] = "100"
         response = requests.post(
             url,
-            data={
-                "module": "/transactions/getAllTransactions",
-                "accessId": brand.access_id,
-                "accessToken": brand.token,
-                "merchantId": brand.merchant_id,
-                "pageIndex": str(page),
-                "status": status,
-                "sDate": f"{day} 00:00:00",
-                "eDate": f"{day} 23:59:59",
-            },
+            data=form,
             timeout=20,
         )
         body = response.json()
@@ -159,6 +178,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
                 player_name=str(user.get("originalName") or _HTML_RE.sub("", str(user.get("name") or "")))[:255],
                 mobile=str(user.get("mobile") or "")[:64],
                 bank=str(bank.get("bank") or "")[:128],
+                bank_name=_selected_bank_name(raw),
                 acc_name=str(bank.get("bankAccountName") or "")[:255],
                 acc_no=str(bank.get("bankAccountNumber") or "")[:64],
                 bsb=str(bank.get("bankBSB") or "")[:32],
@@ -186,6 +206,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
                 "player_name",
                 "mobile",
                 "bank",
+                "bank_name",
                 "acc_name",
                 "acc_no",
                 "bsb",
@@ -196,6 +217,23 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict]) -> None:
                 "processed_at",
             ],
         )
+
+
+def _selected_bank_name(raw: dict) -> str:
+    """Bank chosen in the brand backend when a deposit or withdrawal is completed."""
+    if str(raw.get("status") or "") != "COMPLETED":
+        return ""
+    if str(raw.get("type") or "") not in {"DEPOSIT", "WITHDRAW"}:
+        return ""
+    details = raw.get("details")
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except json.JSONDecodeError:
+            return ""
+    if not isinstance(details, dict):
+        return ""
+    return str(details.get("bank") or "")[:128]
 
 
 def _bank(value: object) -> dict:

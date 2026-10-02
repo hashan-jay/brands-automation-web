@@ -28,6 +28,7 @@ class Transaction(models.Model):
     player_name = models.CharField(max_length=255, blank=True)
     mobile = models.CharField(max_length=64, blank=True)
     bank = models.CharField(max_length=128, blank=True)
+    bank_name = models.CharField(max_length=128, blank=True)
     acc_name = models.CharField(max_length=255, blank=True)
     acc_no = models.CharField(max_length=64, blank=True)
     bsb = models.CharField(max_length=32, blank=True)
@@ -55,6 +56,7 @@ class Transaction(models.Model):
             "mobile": self.mobile,
             "amount": f"{self.amount:.2f}",
             "type": self.type,
+            "bank_name": self.bank_name if self.status == "COMPLETED" and self.type in {"DEPOSIT", "WITHDRAW"} else "",
             "bank": self.bank,
             "acc_name": self.acc_name,
             "acc_no": self.acc_no,
