@@ -54,6 +54,7 @@ button {
   padding: 14px 20px;
   background: #0f2744;
   color: #fff;
+  font-family: "Montserrat", "Segoe UI", sans-serif;
 }
 
 .topbar h1, .topbar p { color: #fff; }
