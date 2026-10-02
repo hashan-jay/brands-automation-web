@@ -7,9 +7,9 @@ import time
 from datetime import date
 
 from django.conf import settings
-from django.utils import timezone
 
 from brands import livecache
+from brands.models import sydney_today
 from brands.services import sync_day
 
 log = logging.getLogger("django")
@@ -25,7 +25,7 @@ def note_watch(day: date) -> None:
 
 def active_dates() -> set[date]:
     now = time.monotonic()
-    today = timezone.localdate()
+    today = sydney_today()
     keep = {today}
     stale = [day for day, seen in _watched.items() if now - seen > 180]
     for day in stale:

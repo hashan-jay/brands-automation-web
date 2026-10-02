@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 
 const COLUMNS = [
-  ["time", "Time"],
+  ["time", "Time (Sydney)"],
   ["id", "ID"],
   ["username", "Username"],
   ["name", "Name"],
@@ -17,8 +17,8 @@ const COLUMNS = [
   ["bsb", "BSB"],
   ["pay_id", "PayID"],
   ["brand", "Brand"],
-  ["created", "Created"],
-  ["processed", "Processed"],
+  ["created", "Created (Sydney)"],
+  ["processed", "Processed (Sydney)"],
   ["status", "Status"],
   ["detail", "Detail"],
 ];
@@ -58,10 +58,12 @@ const WIDGETS = [
 ];
 
 function today() {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Sydney",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 export default function Dashboard() {
@@ -154,10 +156,7 @@ export default function Dashboard() {
             ))}
           </select>
         </label>
-        <label>
-          Date
-          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-        </label>
+        <DateField value={date} onChange={setDate} />
         <button type="button" className={live ? "live on" : "live off"} onClick={() => setLive((value) => !value)}>
           {live ? "Live: ON" : "Live: OFF"}
         </button>
@@ -287,10 +286,110 @@ export default function Dashboard() {
 }
 
 function stamp(value) {
-  const text = String(value || "").trim();
-  if (!text) return 0;
-  const parsed = Date.parse(text.replace(" ", "T"));
-  return Number.isFinite(parsed) ? parsed : 0;
+  const match = String(value || "")
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return 0;
+  const [, year, month, day, hour, minute] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+}
+
+function DateField({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [cursor, setCursor] = useState(() => value.slice(0, 7));
+  const root = useRef(null);
+
+  useEffect(() => {
+    function onPointer(event) {
+      if (root.current && !root.current.contains(event.target)) setOpen(false);
+    }
+    function onKey(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  function toggle() {
+    setCursor(value.slice(0, 7));
+    setOpen((current) => !current);
+  }
+
+  function pick(day) {
+    onChange(day);
+    setOpen(false);
+  }
+
+  return (
+    <div className="date-field" ref={root}>
+      <span className="date-label">Date</span>
+      <button type="button" className="date-button" onClick={toggle} aria-expanded={open}>
+        {formatDay(value)}
+      </button>
+      {open && <Calendar month={cursor} selected={value} onMonth={setCursor} onPick={pick} />}
+    </div>
+  );
+}
+
+function Calendar({ month, selected, onMonth, onPick }) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(year, monthIndex - 1, 1));
+  const startOffset = (first.getUTCDay() + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, monthIndex, 0)).getUTCDate();
+  const cells = [];
+  for (let index = 0; index < startOffset; index += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  const sydneyToday = today();
+
+  function shift(amount) {
+    const next = new Date(Date.UTC(year, monthIndex - 1 + amount, 1));
+    const text = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+    onMonth(text);
+  }
+
+  return (
+    <div className="calendar" key={month}>
+      <div className="calendar-head">
+        <button type="button" onClick={() => shift(-1)} aria-label="Previous month">
+          ‹
+        </button>
+        <strong>{first.toLocaleDateString("en-AU", { month: "long", year: "numeric", timeZone: "UTC" })}</strong>
+        <button type="button" onClick={() => shift(1)} aria-label="Next month">
+          ›
+        </button>
+      </div>
+      <div className="calendar-week">
+        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((label) => (
+          <span key={label}>{label}</span>
+        ))}
+      </div>
+      <div className="calendar-grid">
+        {cells.map((day, index) => {
+          if (!day) return <span key={`empty-${index}`} />;
+          const iso = `${year}-${String(monthIndex).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const className = ["calendar-day", iso === selected ? "selected" : "", iso === sydneyToday ? "today" : ""]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <button key={iso} type="button" className={className} onClick={() => onPick(iso)}>
+              {day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function formatDay(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 function receivedStamp(row) {

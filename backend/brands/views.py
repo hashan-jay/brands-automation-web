@@ -2,13 +2,12 @@ import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from brands import livecache
-from brands.models import Brand
+from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
 from brands.services import load_dashboard, sync_day
 
@@ -64,7 +63,7 @@ def _parse_day(value: object):
             return datetime.strptime(text, "%Y-%m-%d").date()
         except ValueError:
             pass
-    return timezone.localdate()
+    return sydney_today()
 
 
 def _live_response(body: dict) -> Response:
@@ -91,7 +90,7 @@ def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, 
     total_rows = len(scoped)
     errors = [str(item.get("message") or "") for item in meta if item.get("message")]
     synced_at = _latest_sync(meta)
-    stamp = timezone.localtime(synced_at).strftime("%H:%M:%S") if synced_at else ""
+    stamp = synced_at.astimezone(SYDNEY).strftime("%H:%M:%S") if synced_at else ""
     refused_ip = _refused_ip(errors)
     if refused_ip:
         status_line = (

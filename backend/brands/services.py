@@ -7,7 +7,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -15,7 +15,7 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from brands import livecache
-from brands.models import Brand, BrandSync, CompanyBank, Transaction
+from brands.models import SYDNEY, Brand, BrandSync, CompanyBank, Transaction
 
 LIVE_STATUSES = ("PENDING", "COMPLETED", "REJECTED")
 _TAG_RE = re.compile(r"<span[^>]*>(.*?)</span>", re.I)
@@ -544,9 +544,12 @@ def publish_snapshot(day: date) -> dict:
 
 
 def _read_day(day: date) -> tuple[list[dict], list[dict]]:
+    """Rows whose created time falls on this Sydney calendar day. Stored rows are not rewritten."""
+    start = datetime.combine(day, datetime.min.time(), tzinfo=SYDNEY)
+    end = start + timedelta(days=1)
     queryset = (
         Transaction.objects.select_related("brand")
-        .filter(txn_date=day)
+        .filter(created_at__gte=start, created_at__lt=end)
         .order_by("-created_at", "-external_id")
     )
     rows = [item.display() for item in queryset]

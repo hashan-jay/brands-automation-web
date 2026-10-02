@@ -1,4 +1,9 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from django.db import models
+
+SYDNEY = ZoneInfo("Australia/Sydney")
 
 
 class Brand(models.Model):
@@ -96,10 +101,15 @@ class CompanyBank(models.Model):
         return self.account_name or self.external_id
 
 
+def sydney_today():
+    return datetime.now(SYDNEY).date()
+
+
 def _clock(value) -> str:
+    """Sydney wall time for a stored instant. The database value is left unchanged."""
     if value is None:
         return ""
     from django.utils import timezone
 
-    local = timezone.localtime(value) if timezone.is_aware(value) else value
+    local = value.astimezone(SYDNEY) if timezone.is_aware(value) else value.replace(tzinfo=SYDNEY)
     return local.strftime("%Y-%m-%d %H:%M")

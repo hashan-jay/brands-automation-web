@@ -60,10 +60,10 @@ def ping() -> bool:
 def _keys(day: date) -> tuple[str, str, str, str]:
     iso = day.isoformat()
     return (
-        f"brands:snap:{iso}",
-        f"brands:hash:{iso}",
-        f"brands:rev:{iso}",
-        f"brands:mark:{iso}",
+        f"brands:snap:syd:{iso}",
+        f"brands:hash:syd:{iso}",
+        f"brands:rev:syd:{iso}",
+        f"brands:mark:syd:{iso}",
     )
 
 
