@@ -255,7 +255,9 @@ tr.deposit td:nth-child(7) { color: #15803d; font-weight: 700; }
 tr.withdraw td:nth-child(7) { color: #b91c1c; font-weight: 700; }
 tr.bonus td:nth-child(7) { color: #1d4ed8; font-weight: 700; }
 tr.forfeited td:nth-child(7) { color: #7c3aed; font-weight: 700; }
+tbody tr:hover td { background: #f8fafc; }
 tr.pending { background: #fffbeb; }
+tr.pending:hover td { background: #fef3c7; }
 tr.pending td:nth-child(18) { color: #a16207; font-weight: 700; }
 tr.rejected td:nth-child(18) { color: #6b7280; font-weight: 700; }
 td.bank-name, td.bank-account { font-weight: 700; color: #0f2744; }
@@ -286,6 +288,23 @@ td.bank-name, td.bank-account { font-weight: 700; color: #0f2744; }
 }
 
 .stats-net { text-align: right; }
+button.stats-net {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  padding: 8px 10px;
+  color: inherit;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+button.stats-net:hover,
+button.stats-net.selected {
+  background: #fff;
+  border-color: #e2e8f0;
+}
+button.stats-net.selected {
+  border-color: #15803d;
+  box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.16);
+}
 .stats-net span { display: block; }
 .stats-net strong {
   display: block;
@@ -293,6 +312,22 @@ td.bank-name, td.bank-account { font-weight: 700; color: #0f2744; }
   font-size: 22px;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
+}
+
+.stats-hint {
+  margin: 0 0 10px;
+  color: #5b6b7c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.text-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: underline;
 }
 
 .widgets {
@@ -304,11 +339,38 @@ td.bank-name, td.bank-account { font-weight: 700; color: #0f2744; }
 .widget {
   position: relative;
   overflow: hidden;
+  width: 100%;
+  text-align: left;
+  color: inherit;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 12px 14px 12px 16px;
   box-shadow: 0 1px 2px rgba(15, 39, 68, 0.05);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+
+.widget:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(15, 39, 68, 0.1);
+}
+
+.widget:active { transform: translateY(0); }
+
+.widget.selected {
+  border-color: var(--accent, #0f766e);
+  background: color-mix(in srgb, var(--accent, #0f766e) 8%, #fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #0f766e) 24%, transparent);
+}
+
+.widgets.filtering .widget:not(.selected) { opacity: 0.62; }
+.widgets.filtering .widget:not(.selected):hover { opacity: 1; }
+
+.widget:focus-visible,
+.stats-net:focus-visible,
+.brand-chip:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
 }
 
 .widget::before {
@@ -377,8 +439,20 @@ td.bank-name, td.bank-account { font-weight: 700; color: #0f2744; }
   border-radius: 999px;
   padding: 6px 10px;
   color: #475569;
+  font: inherit;
   font-size: 12px;
   font-weight: 600;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.brand-chip:hover {
+  border-color: #0f766e;
+  transform: translateY(-1px);
+}
+
+.brand-chip.selected {
+  border-color: #0f766e;
+  background: #f0fdfa;
 }
 
 .brand-chip strong { color: #0f2744; }

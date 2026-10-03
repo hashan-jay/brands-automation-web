@@ -47,14 +47,14 @@ const SORTS = [
 ];
 
 const WIDGETS = [
-  ["pending_deposit", "Pending deposits", "pending-in"],
-  ["pending_withdraw", "Pending withdrawals", "pending-out"],
-  ["completed_deposit", "Completed deposits", "done-in"],
-  ["completed_withdraw", "Completed withdrawals", "done-out"],
-  ["bonus", "Bonus", "bonus"],
-  ["forfeited", "Forfeited", "forfeited"],
-  ["processing", "Processing", "processing"],
-  ["rejected", "Rejected", "rejected"],
+  ["pending_deposit", "Pending deposits", "pending-in", "PENDING", "DEPOSIT"],
+  ["pending_withdraw", "Pending withdrawals", "pending-out", "PENDING", "WITHDRAW"],
+  ["completed_deposit", "Completed deposits", "done-in", "COMPLETED", "DEPOSIT"],
+  ["completed_withdraw", "Completed withdrawals", "done-out", "COMPLETED", "WITHDRAW"],
+  ["bonus", "Bonus", "bonus", "All statuses", "BONUS"],
+  ["forfeited", "Forfeited", "forfeited", "All statuses", "FORFEITED"],
+  ["processing", "Processing", "processing", "PROCESSING", "All types"],
+  ["rejected", "Rejected", "rejected", "REJECTED", "All types"],
 ];
 
 function today() {
@@ -73,11 +73,13 @@ export default function Dashboard() {
   const [type, setType] = useState("All types");
   const [status, setStatus] = useState("All statuses");
   const [sortBy, setSortBy] = useState("Sort by Time");
+  const [focus, setFocus] = useState("");
   const [live, setLive] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const revision = useRef("");
+  const tableRef = useRef(null);
 
   useEffect(() => {
     api("/api/brands/")
@@ -122,6 +124,25 @@ export default function Dashboard() {
     };
   }, [brand, date, type, status, live]);
 
+  function selectWidget(key, nextStatus, nextType) {
+    if (focus === key) {
+      setFocus("");
+      setStatus("All statuses");
+      setType("All types");
+    } else {
+      setFocus(key);
+      setStatus(nextStatus);
+      setType(nextType);
+    }
+    tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function clearFocus() {
+    setFocus("");
+    setStatus("All statuses");
+    setType("All types");
+  }
+
   async function refreshNow() {
     setRefreshing(true);
     setError("");
@@ -139,9 +160,13 @@ export default function Dashboard() {
   }
 
   const stats = data?.stats || EMPTY_STATS;
-  const rows = useMemo(() => sortRows(data?.rows || [], sortBy), [data, sortBy]);
+  const rows = useMemo(() => {
+    const source = focus ? (data?.rows || []).filter((row) => matchesWidget(row, focus)) : data?.rows || [];
+    return sortRows(source, sortBy);
+  }, [data, sortBy, focus]);
   if (data?.stats && data.stats.row_count == null) revision.current = "";
-  const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other"]] : WIDGETS;
+  const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other", "OTHER", "All types"]] : WIDGETS;
+  const focusTitle = widgetTitle(focus, widgets);
   const brandSummary = data?.brand_summary || [];
 
   return (
@@ -169,7 +194,7 @@ export default function Dashboard() {
 
       <section className="main">
         <div className="toolbar">
-          <h2>Transactions</h2>
+          <h2>{focusTitle ? focusTitle : "Transactions"}</h2>
           <div className="filters">
             <label>
               Sort by
@@ -181,7 +206,13 @@ export default function Dashboard() {
             </label>
             <label>
               Status
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <select
+                value={status}
+                onChange={(event) => {
+                  setFocus("");
+                  setStatus(event.target.value);
+                }}
+              >
                 <option>All statuses</option>
                 <option>PENDING</option>
                 <option>PROCESSING</option>
@@ -192,7 +223,13 @@ export default function Dashboard() {
             </label>
             <label>
               Type
-              <select value={type} onChange={(event) => setType(event.target.value)}>
+              <select
+                value={type}
+                onChange={(event) => {
+                  setFocus("");
+                  setType(event.target.value);
+                }}
+              >
                 <option>All types</option>
                 <option>DEPOSIT</option>
                 <option>WITHDRAW</option>
@@ -203,7 +240,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap" ref={tableRef}>
           <table>
             <thead>
               <tr>
@@ -216,7 +253,7 @@ export default function Dashboard() {
               {rows.length === 0 && (
                 <tr>
                   <td className="empty" colSpan={COLUMNS.length}>
-                    No transactions for this date yet.
+                    {focusTitle ? `No ${focusTitle.toLowerCase()} for this date.` : "No transactions for this date yet."}
                   </td>
                 </tr>
               )}
@@ -250,34 +287,64 @@ export default function Dashboard() {
                 {brand} · {date} · {Number(bucket(stats, "row_count").count).toLocaleString()} transactions
               </p>
             </div>
-            <div className="stats-net">
+            <button
+              type="button"
+              className={`stats-net${focus === "net_completed" ? " selected" : ""}`}
+              aria-pressed={focus === "net_completed"}
+              onClick={() => selectWidget("net_completed", "COMPLETED", "All types")}
+            >
               <span>Net completed</span>
               <strong className={amountTone(bucket(stats, "net_completed").amount)}>
                 {money(bucket(stats, "net_completed").amount)}
               </strong>
               <span>{Number(bucket(stats, "net_completed").count).toLocaleString()} deposits and withdrawals</span>
-            </div>
+            </button>
           </div>
-          <div className="widgets">
-            {widgets.map(([key, title, tone]) => {
+          <p className="stats-hint">
+            {focusTitle ? (
+              <>
+                Showing {focusTitle.toLowerCase()}.{" "}
+                <button type="button" className="text-button" onClick={clearFocus}>
+                  Show all
+                </button>
+              </>
+            ) : (
+              "Click a card to list those transactions."
+            )}
+          </p>
+          <div className={`widgets${focus ? " filtering" : ""}`}>
+            {widgets.map(([key, title, tone, nextStatus, nextType]) => {
               const item = bucket(stats, key);
+              const selected = focus === key;
               return (
-                <article key={key} className={`widget ${tone}`}>
+                <button
+                  key={key}
+                  type="button"
+                  className={`widget ${tone}${selected ? " selected" : ""}`}
+                  aria-pressed={selected}
+                  onClick={() => selectWidget(key, nextStatus, nextType)}
+                >
                   <span className="widget-label">{title}</span>
                   <strong className={`widget-amount ${amountTone(item.amount)}`}>{money(item.amount)}</strong>
                   <span className="widget-count">{Number(item.count).toLocaleString()} transactions</span>
-                </article>
+                </button>
               );
             })}
           </div>
           {brandSummary.length > 1 && (
             <div className="brand-chips">
               {brandSummary.map((item) => (
-                <span key={item.name} className="brand-chip">
+                <button
+                  key={item.name}
+                  type="button"
+                  className={`brand-chip${brand === item.name ? " selected" : ""}`}
+                  aria-pressed={brand === item.name}
+                  onClick={() => setBrand(brand === item.name ? "All" : item.name)}
+                >
                   <strong>{item.name}</strong>
                   <span>{Number(item.rows).toLocaleString()} rows</span>
                   <span className={item.pending ? "chip-pending" : ""}>{Number(item.pending).toLocaleString()} pending</span>
-                </span>
+                </button>
               ))}
             </div>
           )}
@@ -434,6 +501,33 @@ function compareName(left, right) {
 
 function compareText(left, right) {
   return String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base", numeric: true });
+}
+
+function widgetTitle(key, widgets) {
+  if (key === "net_completed") return "Net completed";
+  return widgets.find((item) => item[0] === key)?.[1] || "";
+}
+
+function matchesWidget(row, key) {
+  if (key === "net_completed") {
+    const bucketName = rowBucket(row);
+    return bucketName === "completed_deposit" || bucketName === "completed_withdraw";
+  }
+  return rowBucket(row) === key;
+}
+
+function rowBucket(row) {
+  const status = row.status;
+  const kind = row.type;
+  if (status === "PENDING" && kind === "DEPOSIT") return "pending_deposit";
+  if (status === "PENDING" && kind === "WITHDRAW") return "pending_withdraw";
+  if (status === "PROCESSING") return "processing";
+  if (status === "REJECTED") return "rejected";
+  if (status === "COMPLETED" && kind === "DEPOSIT") return "completed_deposit";
+  if (status === "COMPLETED" && kind === "WITHDRAW") return "completed_withdraw";
+  if (kind === "BONUS") return "bonus";
+  if (kind === "FORFEITED") return "forfeited";
+  return "other";
 }
 
 function bucket(stats, key) {
