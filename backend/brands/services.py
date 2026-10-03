@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -16,6 +17,8 @@ from django.utils import timezone
 
 from brands import livecache
 from brands.models import SYDNEY, Brand, BrandSync, CompanyBank, Transaction
+
+UTC = ZoneInfo("UTC")
 
 LIVE_STATUSES = ("PENDING", "COMPLETED", "REJECTED")
 _TAG_RE = re.compile(r"<span[^>]*>(.*?)</span>", re.I)
@@ -421,20 +424,26 @@ def _bank(value: object) -> dict:
 
 
 def _parse_dt(value: object):
-    text = str(value or "").strip().replace("T", " ")
+    """Keep the brand API instant. createdDateTime arrives as UTC, for example 2026-10-03T05:26:41+00:00."""
+    text = str(value or "").strip()
     if not text:
         return None
-    parsed = None
-    for fmt, size in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16)):
-        try:
-            parsed = datetime.strptime(text[:size], fmt)
-            break
-        except ValueError:
-            continue
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
     if parsed is None:
-        return None
+        compact = text.replace("T", " ")
+        for fmt, size in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16)):
+            try:
+                parsed = datetime.strptime(compact[:size], fmt)
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            return None
     if timezone.is_naive(parsed):
-        return timezone.make_aware(parsed, timezone.get_current_timezone())
+        return parsed.replace(tzinfo=UTC)
     return parsed
 
 
