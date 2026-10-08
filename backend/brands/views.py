@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from brands import livecache
 from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
-from brands.services import bank_accounts, load_dashboard, sync_day
+from brands.services import bank_accounts, load_dashboard, sync_day, transaction_record
 
 
 class BrandListView(APIView):
@@ -46,6 +46,20 @@ class BankAccountsView(APIView):
         brand_name = str(request.query_params.get("brand") or "")
         bank_name = str(request.query_params.get("bank_name") or "")
         return _live_response(bank_accounts(day, brand_name, bank_name))
+
+
+class TransactionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        brand_name = str(request.query_params.get("brand") or "")
+        external_id = str(request.query_params.get("id") or "")
+        if not brand_name.strip() or not external_id.strip():
+            return Response({"detail": "Choose a transaction."}, status=400)
+        payload, error = transaction_record(brand_name, external_id)
+        if error:
+            return Response({"detail": error}, status=404)
+        return _live_response(payload)
 
 
 class SyncView(APIView):

@@ -78,6 +78,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [opened, setOpened] = useState(null);
   const revision = useRef("");
   const tableRef = useRef(null);
 
@@ -170,6 +171,7 @@ export default function Dashboard() {
   const brandSummary = data?.brand_summary || [];
 
   return (
+    <>
     <div className="workspace">
       <aside className="side">
         <label>
@@ -259,7 +261,16 @@ export default function Dashboard() {
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={`${row.brand}-${row.id}`} className={rowClass(row)}>
+                <tr
+                  key={`${row.brand}-${row.id}`}
+                  className={`${rowClass(row)} txn-row`.trim()}
+                  tabIndex={0}
+                  title="Show this transaction"
+                  onClick={() => openTransaction(row, setOpened)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") openTransaction(row, setOpened);
+                  }}
+                >
                   {COLUMNS.map(([key]) => (
                     <td
                       key={key}
@@ -351,6 +362,103 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+    </div>
+    {opened && <TransactionDialog request={opened} onClose={() => setOpened(null)} />}
+    </>
+  );
+}
+
+function openTransaction(row, setOpened) {
+  const id = String(row?.id || "").trim();
+  const brandName = String(row?.brand || "").trim();
+  if (!id || !brandName) return;
+  setOpened({ brand: brandName, id, token: Date.now() });
+}
+
+function TransactionDialog({ request, onClose }) {
+  const [state, setState] = useState({ status: "loading", body: null, error: "" });
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const id = ++requestId.current;
+    let stopped = false;
+    setState({ status: "loading", body: null, error: "" });
+    const params = new URLSearchParams({ brand: request.brand, id: request.id });
+    api(`/api/transactions/detail/?${params.toString()}`)
+      .then((body) => {
+        if (stopped || id !== requestId.current) return;
+        if (body?.id !== request.id || body?.brand !== request.brand) {
+          setState({ status: "error", body: null, error: "The brand API returned a different transaction." });
+          return;
+        }
+        setState({ status: "ready", body, error: "" });
+      })
+      .catch((err) => {
+        if (!stopped && id === requestId.current) {
+          setState({ status: "error", body: null, error: err.message });
+        }
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [request]);
+
+  const body = state.body;
+  const title = body?.type ? `${body.type} ${body.id}` : request.id;
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="txn-title">
+        <div className="modal-head">
+          <div>
+            <h2 id="txn-title">{title}</h2>
+            <p>
+              {request.brand}
+              {body?.status ? ` · ${body.status}` : ""}
+            </p>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {state.status === "loading" && <p className="bank-hint">Loading this transaction from the brand API…</p>}
+        {state.status === "error" && <p className="form-error">{state.error}</p>}
+        {state.status === "ready" &&
+          (body.sections || []).map((section) => (
+            <section key={section.title} className="detail-section">
+              <h3>{section.title}</h3>
+              <dl className="detail-grid">
+                {(section.fields || []).map((field) => (
+                  <div key={`${section.title}-${field.label}`} className="detail-row">
+                    <dt>{field.label}</dt>
+                    <dd>
+                      {field.href ? (
+                        <a href={field.href} target="_blank" rel="noreferrer">
+                          {field.value}
+                        </a>
+                      ) : (
+                        field.value
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
+      </div>
     </div>
   );
 }

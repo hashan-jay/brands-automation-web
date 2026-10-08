@@ -18,7 +18,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from brands import livecache
-from brands.models import SYDNEY, Brand, BrandSync, CompanyBank, Transaction
+from brands.models import SYDNEY, Brand, BrandSync, CompanyBank, Transaction, _clock
 
 UTC = ZoneInfo("UTC")
 
@@ -651,6 +651,221 @@ def bank_accounts(day: date, brand_name: str, bank_name: str) -> dict:
         }
     )
     return result
+
+
+_DETAIL_LABELS = {
+    "id": "ID",
+    "type": "Type",
+    "status": "Status",
+    "cash": "Amount",
+    "createdDateTime": "Created (Sydney)",
+    "processedDateTime": "Processed (Sydney)",
+    "endDateTime": "Ended (Sydney)",
+    "bankId": "Bank ID",
+    "canHandle": "Can handle",
+    "merchantId": "Merchant ID",
+    "adminId": "Admin ID",
+    "amount": "Amount",
+    "bank": "Bank",
+    "method": "Method",
+    "datetime": "Date time",
+    "slip": "Slip",
+    "bankRemark": "Bank remark",
+    "gateway": "Gateway",
+    "MBOStaffName": "Staff",
+    "bankAccountName": "Account name",
+    "bankAccountNumber": "Account number",
+    "bankBSB": "BSB",
+    "payID": "PayID",
+    "bankLock": "Bank lock",
+    "walletId": "Wallet ID",
+    "forfeited": "Forfeited",
+    "remarks": "Remarks",
+    "angpao": "Angpao",
+    "promotionId": "Promotion ID",
+    "username": "Username",
+    "originalName": "Name",
+    "mobile": "Mobile",
+    "last_dep_datetime": "Last deposit",
+    "name": "Name",
+}
+_SYDNEY_KEYS = {"createdDateTime", "processedDateTime", "endDateTime"}
+_MONEY_KEYS = {"cash", "amount"}
+_FLAG_KEYS = {"canHandle", "bankLock"}
+_NESTED_KEYS = {"user", "details", "promotion", "admin", "bank"}
+
+
+def transaction_record(brand_name: str, external_id: str) -> tuple[dict | None, str]:
+    """Live brand-API record for one stored transaction.
+
+    The id is taken from the clicked row and checked against that brand.
+    Only the API object with that same id is returned. Nothing is written.
+    """
+    brand_name = brand_name.strip()
+    external_id = external_id.strip()
+    brand = Brand.objects.filter(is_active=True, name=brand_name).first()
+    if brand is None or not external_id:
+        return None, "That transaction was not found."
+    if not Transaction.objects.filter(brand=brand, external_id=external_id).exists():
+        return None, "That transaction was not found."
+    if not brand.token or not brand.merchant_id:
+        return None, f"{brand.name} has no API access configured."
+
+    url = brand.domain.rstrip("/") + "/api/v1/index.php"
+    form = {
+        "module": "/transactions/getAllTransactions",
+        "accessId": brand.access_id,
+        "accessToken": brand.token,
+        "merchantId": brand.merchant_id,
+        "pageIndex": "0",
+        "pageSize": "5",
+        "transactionId": external_id,
+        "includeAdmin": "1",
+    }
+    try:
+        body = _post(url, form).json()
+    except requests.RequestException:
+        return None, "The brand API could not be reached."
+    except ValueError:
+        return None, "The brand API did not return JSON."
+    if str(body.get("status") or "") != "SUCCESS":
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        message = str(data.get("message") or "") or "The brand API refused the request."
+        return None, message
+
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    rows = data.get("transactions") if isinstance(data.get("transactions"), list) else []
+    match = next((row for row in rows if isinstance(row, dict) and str(row.get("id") or "").strip() == external_id), None)
+    if match is None:
+        return None, "The brand API did not return this transaction."
+    return _present_transaction(brand.name, external_id, match), ""
+
+
+def _present_transaction(brand_name: str, external_id: str, raw: dict) -> dict:
+    details = _json_dict(raw.get("details"))
+    user = raw.get("user") if isinstance(raw.get("user"), dict) else _json_dict(raw.get("user"))
+    player_bank = _json_dict(user.get("bank"))
+    promotion = raw.get("promotion") if isinstance(raw.get("promotion"), dict) else _json_dict(raw.get("promotion"))
+    admin = raw.get("admin") if isinstance(raw.get("admin"), dict) else _json_dict(raw.get("admin"))
+    tags = [part for part in (_clean_label(item) for item in _TAG_RE.findall(str(user.get("name") or ""))) if part]
+
+    transaction_fields = _fields(
+        raw,
+        ("id", "type", "status", "cash", "createdDateTime", "processedDateTime", "endDateTime", "bankId", "canHandle", "merchantId", "adminId"),
+    )
+    transaction_fields.insert(0, {"label": "Game", "value": brand_name, "href": ""})
+    sections = [{"title": "Transaction", "fields": transaction_fields}]
+    detail_fields = _fields(
+        details,
+        (
+            "amount",
+            "bank",
+            "method",
+            "gateway",
+            "bankRemark",
+            "slip",
+            "datetime",
+            "MBOStaffName",
+            "bankAccountName",
+            "bankAccountNumber",
+            "bankBSB",
+            "payID",
+            "bankLock",
+            "forfeited",
+            "walletId",
+            "remarks",
+            "angpao",
+            "promotionId",
+        ),
+    )
+    if detail_fields:
+        sections.append({"title": "Payment details", "fields": detail_fields})
+    player = dict(user)
+    player.pop("bank", None)
+    player.pop("name", None)
+    player_fields = _fields(player, ("username", "originalName", "mobile", "id", "last_dep_datetime"))
+    if tags:
+        player_fields.append({"label": "Tags", "value": ", ".join(tags), "href": ""})
+    if player_fields:
+        sections.append({"title": "Player", "fields": player_fields})
+    bank_fields = _fields(player_bank, ("bank", "bankAccountName", "bankAccountNumber", "bankBSB", "payID", "bankLock"))
+    if bank_fields:
+        sections.append({"title": "Player bank", "fields": bank_fields})
+    promotion_fields = _fields(promotion, ("name", "id"))
+    if promotion_fields:
+        sections.append({"title": "Promotion", "fields": promotion_fields})
+    admin_fields = _fields(admin, ("name", "username", "id"))
+    if admin_fields:
+        sections.append({"title": "Processed by", "fields": admin_fields})
+
+    return {
+        "brand": brand_name,
+        "id": external_id,
+        "type": str(raw.get("type") or ""),
+        "status": str(raw.get("status") or ""),
+        "sections": sections,
+    }
+
+
+def _json_dict(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip()[:1] in "{[":
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _fields(data: dict, order: tuple[str, ...]) -> list[dict]:
+    fields = []
+    seen: set[str] = set()
+    for key in (*order, *(key for key in data if key not in order)):
+        if key in seen or key in _NESTED_KEYS:
+            continue
+        seen.add(key)
+        shown = _format_field(key, data.get(key))
+        if shown is None:
+            continue
+        fields.append({"label": _DETAIL_LABELS.get(key, _label(key)), **shown})
+    return fields
+
+
+def _format_field(key: str, value: object) -> dict | None:
+    if isinstance(value, (dict, list)):
+        if not value:
+            return None
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    elif key in _FLAG_KEYS and str(value) in {"0", "1"}:
+        text = "Yes" if str(value) == "1" else "No"
+    elif key in _MONEY_KEYS and value not in (None, ""):
+        try:
+            text = f"{Decimal(str(value)):.2f}"
+        except (InvalidOperation, ValueError):
+            text = _plain(value)
+    elif key in _SYDNEY_KEYS:
+        parsed = _parse_dt(value)
+        text = _clock(parsed) if parsed is not None else _plain(value)
+    else:
+        text = _plain(value)
+    if not text or text.lower() in {"none", "null"}:
+        return None
+    href = text if text.startswith(("http://", "https://")) else ""
+    return {"value": text, "href": href}
+
+
+def _plain(value: object) -> str:
+    text = str(value if value is not None else "")
+    if "<" in text and ">" in text:
+        text = _HTML_RE.sub("", text)
+    return _clean_label(text)
+
+
+def _label(key: str) -> str:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(key)).replace("_", " ")
+    return spaced[:1].upper() + spaced[1:]
 
 
 def _read_day(day: date) -> tuple[list[dict], list[dict]]:
