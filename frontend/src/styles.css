@@ -100,7 +100,7 @@ button {
 
 .workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
 }
@@ -219,6 +219,108 @@ input, select {
 .calendar-day.selected:hover { background: #0f766e; }
 
 .status { margin: 0; font-size: 13px; font-weight: 500; }
+
+.bank-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.bank-section h3 {
+  margin: 0;
+  color: #0f2744;
+  font-size: 15px;
+}
+
+.bank-hint {
+  margin: 0;
+  color: #5b6b7c;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.bank-total {
+  background: #f4f7fb;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.bank-total span {
+  display: block;
+  color: #5b6b7c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.bank-total strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+.bank-total p {
+  margin: 4px 0 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bank-total p:last-child { margin-bottom: 0; }
+
+.bank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.bank-account {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  color: inherit;
+}
+
+.bank-account:hover { border-color: #0f766e; }
+
+.bank-account.selected {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.bank-account-name {
+  display: block;
+  color: #0f2744;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.bank-account-balance {
+  display: block;
+  margin-top: 2px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.bank-account-balance.up, .bank-total .up { color: #15803d; }
+.bank-account-balance.down, .bank-total .down { color: #b91c1c; }
+.bank-account-balance.flat, .bank-total .flat { color: #0f2744; }
 
 .toolbar { justify-content: space-between; margin-bottom: 8px; }
 .toolbar h2, .stats h3, .card h2 { margin: 0; color: #0f2744; }

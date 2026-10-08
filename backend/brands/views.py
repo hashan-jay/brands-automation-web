@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from brands import livecache
 from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
-from brands.services import load_dashboard, sync_day
+from brands.services import bank_accounts, load_dashboard, sync_day
 
 
 class BrandListView(APIView):
@@ -36,6 +36,16 @@ class DashboardView(APIView):
             if current is not None and current == client_rev:
                 return _live_response({"unchanged": True, "revision": int(current)})
         return _live_response(_dashboard_body(day, brand_name, wanted_type, wanted_status, load_dashboard(day)))
+
+
+class BankAccountsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        day = _parse_day(request.query_params.get("date"))
+        brand_name = str(request.query_params.get("brand") or "")
+        bank_name = str(request.query_params.get("bank_name") or "")
+        return _live_response(bank_accounts(day, brand_name, bank_name))
 
 
 class SyncView(APIView):

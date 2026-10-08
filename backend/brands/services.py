@@ -13,6 +13,8 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from django.db import close_old_connections, transaction
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from brands import livecache
@@ -552,10 +554,108 @@ def publish_snapshot(day: date) -> dict:
     return {"rows": rows, "brands": brands, "revision": None}
 
 
-def _read_day(day: date) -> tuple[list[dict], list[dict]]:
-    """Rows whose created time falls on this Sydney calendar day. Stored rows are not rewritten."""
+def _sydney_bounds(day: date) -> tuple[datetime, datetime]:
+    """The same Sydney calendar day the dashboard uses for created time."""
     start = datetime.combine(day, datetime.min.time(), tzinfo=SYDNEY)
     end = start + timedelta(days=1)
+    return start, end
+
+
+def _money_text(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.01')):.2f}"
+
+
+def bank_accounts(day: date, brand_name: str, bank_name: str) -> dict:
+    """Account names and completed balances for one game and one bank.
+
+    A bank name does not share the same accounts on every brand, so both
+    filters are required before any account is returned. The date window
+    matches the dashboard. This only reads stored rows.
+    """
+    brand_name = brand_name.strip()
+    bank_name = bank_name.strip()
+    result = {
+        "date": day.isoformat(),
+        "brand": brand_name,
+        "bank_name": "",
+        "banks": [],
+        "accounts": [],
+        "balance": "0.00",
+        "deposits": "0.00",
+        "withdrawals": "0.00",
+        "count": 0,
+        "unassigned": {"count": 0, "balance": "0.00"},
+    }
+    brand = Brand.objects.filter(is_active=True, name=brand_name).first()
+    if brand is None:
+        return result
+
+    start, end = _sydney_bounds(day)
+    completed = Transaction.objects.filter(
+        brand=brand,
+        created_at__gte=start,
+        created_at__lt=end,
+        status="COMPLETED",
+        type__in=("DEPOSIT", "WITHDRAW"),
+    )
+    named = completed.exclude(bank_name="").exclude(bank_account_name="")
+    banks = sorted(set(named.values_list("bank_name", flat=True)), key=str.casefold)
+    result["banks"] = banks
+    if bank_name not in banks:
+        return result
+
+    result["bank_name"] = bank_name
+    zero = Decimal("0.00")
+    grouped = named.filter(bank_name=bank_name).values("bank_account_name").annotate(
+        balance=Coalesce(Sum("amount"), zero),
+        deposits=Coalesce(Sum("amount", filter=Q(type="DEPOSIT")), zero),
+        withdrawals=Coalesce(Sum("amount", filter=Q(type="WITHDRAW")), zero),
+        count=Count("id"),
+    )
+    balance = deposits = withdrawals = zero
+    count = 0
+    accounts = []
+    for row in sorted(grouped, key=lambda item: str(item["bank_account_name"]).casefold()):
+        row_balance = row["balance"]
+        row_deposits = row["deposits"]
+        row_withdrawals = row["withdrawals"]
+        row_count = int(row["count"])
+        balance += row_balance
+        deposits += row_deposits
+        withdrawals += row_withdrawals
+        count += row_count
+        accounts.append(
+            {
+                "name": row["bank_account_name"],
+                "balance": _money_text(row_balance),
+                "deposits": _money_text(row_deposits),
+                "withdrawals": _money_text(row_withdrawals),
+                "count": row_count,
+            }
+        )
+    missing = completed.filter(bank_name=bank_name, bank_account_name="").aggregate(
+        balance=Coalesce(Sum("amount"), zero),
+        count=Count("id"),
+    )
+    result.update(
+        {
+            "accounts": accounts,
+            "balance": _money_text(balance),
+            "deposits": _money_text(deposits),
+            "withdrawals": _money_text(withdrawals),
+            "count": count,
+            "unassigned": {
+                "count": int(missing["count"] or 0),
+                "balance": _money_text(missing["balance"]),
+            },
+        }
+    )
+    return result
+
+
+def _read_day(day: date) -> tuple[list[dict], list[dict]]:
+    """Rows whose created time falls on this Sydney calendar day. Stored rows are not rewritten."""
+    start, end = _sydney_bounds(day)
     queryset = (
         Transaction.objects.select_related("brand")
         .filter(created_at__gte=start, created_at__lt=end)
