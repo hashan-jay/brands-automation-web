@@ -703,7 +703,16 @@ button.stats-net.selected {
 }
 
 .ledger-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
   padding: 12px 14px 8px;
+}
+
+.ledger-filter {
+  flex: 0 0 200px;
+  min-width: 180px;
 }
 
 .ledger-intro h2 {

@@ -466,7 +466,12 @@ function TransactionDialog({ request, onClose }) {
   );
 }
 
-const LEDGER_STATUSES = ["Block", "Withdraw only", "Deposit only", "Both", "Active", "Inactive"];
+const BANK_STATUS_FILTERS = [
+  ["All", "All"],
+  ["Deposit only", "Deposit Only"],
+  ["Withdraw only", "Withdraw Only"],
+  ["Both", "Both"],
+];
 
 const LEDGER_CARDS = [
   ["status", "Status", "text"],
@@ -497,16 +502,21 @@ function BankLedger({ date, brand, revision }) {
   const tableScroll = useRef(null);
   const totalScroll = useRef(null);
   const [columnWidths, setColumnWidths] = useState([]);
-  const totals = useMemo(() => ledgerTotals(rows), [rows]);
+  const [statusFilter, setStatusFilter] = useState("All");
+  const visibleRows = useMemo(() => {
+    if (statusFilter === "All") return rows;
+    return rows.filter((row) => row.status === statusFilter);
+  }, [rows, statusFilter]);
+  const totals = useMemo(() => ledgerTotals(visibleRows), [visibleRows]);
   const orderedRows = useMemo(() => {
     const active = [];
     const inactive = [];
-    for (const row of rows) {
+    for (const row of visibleRows) {
       if (bankIsActive(row)) active.push(row);
       else inactive.push(row);
     }
     return [...active, ...inactive];
-  }, [rows]);
+  }, [visibleRows]);
 
   useLayoutEffect(() => {
     const head = tableHead.current;
@@ -564,18 +574,6 @@ function BankLedger({ date, brand, revision }) {
     if (next?.row) replaceRow(next.row);
   }
 
-  async function changeStatus(row, status) {
-    const previous = rows;
-    replaceRow({ ...row, status });
-    try {
-      await save(row, { status });
-      setError("");
-    } catch (err) {
-      setRows(previous);
-      setError(err.message);
-    }
-  }
-
   function startLimit(row) {
     setEditing({ bank_name: row.bank_name, account_name: row.account_name, value: row.limit ?? "" });
   }
@@ -601,11 +599,23 @@ function BankLedger({ date, brand, revision }) {
   return (
     <section className="ledger">
       <div className="ledger-intro">
-        <h2>Bank balances</h2>
-        <p>
-          {brand === "All" ? "All brands" : brand} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
-          Closing balance is that opening balance plus this day’s deposits and withdrawals.
-        </p>
+        <div>
+          <h2>Bank balances</h2>
+          <p>
+            {brand === "All" ? "All brands" : brand} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
+            Closing balance is that opening balance plus this day’s deposits and withdrawals.
+          </p>
+        </div>
+        <label className="ledger-filter">
+          Status
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            {BANK_STATUS_FILTERS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       {error && <p className="form-error">{error}</p>}
       <div className="ledger-wrap" ref={tableScroll} onScroll={syncTotalScroll}>
@@ -613,7 +623,6 @@ function BankLedger({ date, brand, revision }) {
           <thead>
             <tr ref={tableHead}>
               <th className="ledger-activity-head">Bank Active/Inactive</th>
-              <th>STATUS</th>
               <th>BANK NAME</th>
               <th>BANK ACCOUNT NAME</th>
               <th>OPENING BALANCE</th>
@@ -632,15 +641,22 @@ function BankLedger({ date, brand, revision }) {
           <tbody>
             {loading && rows.length === 0 && (
               <tr>
-                <td className="ledger-empty" colSpan={15}>
+                <td className="ledger-empty" colSpan={14}>
                   Loading bank balances…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="ledger-empty" colSpan={15}>
+                <td className="ledger-empty" colSpan={14}>
                   No bank accounts for this date.
+                </td>
+              </tr>
+            )}
+            {!loading && rows.length > 0 && orderedRows.length === 0 && (
+              <tr>
+                <td className="ledger-empty" colSpan={14}>
+                  No bank accounts for this status.
                 </td>
               </tr>
             )}
@@ -655,20 +671,6 @@ function BankLedger({ date, brand, revision }) {
                   onClick={() => setOpened({ bank_name: row.bank_name, account_name: row.account_name })}
                 >
                   <td className={`ledger-activity ${active ? "is-active" : "is-inactive"}`}>{active ? "Active" : "Inactive"}</td>
-                  <td
-                    className={`ledger-status ${ledgerStatusClass(row.status)}`}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <select
-                      aria-label={`Status for ${row.account_name}`}
-                      value={row.status}
-                      onChange={(event) => changeStatus(row, event.target.value)}
-                    >
-                      {LEDGER_STATUSES.map((option) => (
-                        <option key={option}>{option}</option>
-                      ))}
-                    </select>
-                  </td>
                   <td className="ledger-bank">{row.bank_name}</td>
                   <td className="ledger-account">{row.account_name}</td>
                   <td className="ledger-open">{money(row.opening)}</td>
@@ -711,7 +713,7 @@ function BankLedger({ date, brand, revision }) {
           </tbody>
         </table>
       </div>
-      {rows.length > 0 && (
+      {orderedRows.length > 0 && (
         <div className="ledger-total-wrap" ref={totalScroll}>
           <table
             className="ledger-table ledger-total-table"
@@ -725,12 +727,11 @@ function BankLedger({ date, brand, revision }) {
             <tbody>
               <tr className="ledger-total">
                 <td
-                  className="ledger-total-count"
+                  className="ledger-total-label"
                   title={`${totals.activeCount.toLocaleString()} active, ${totals.inactiveCount.toLocaleString()} inactive`}
                 >
-                  {totals.activeCount.toLocaleString()} / {totals.inactiveCount.toLocaleString()}
+                  Total
                 </td>
-                <td className="ledger-total-label">Total</td>
                 <td className="ledger-total-count" title={`${totals.bankCount.toLocaleString()} bank names`}>
                   {totals.bankCount.toLocaleString()}
                 </td>
@@ -933,12 +934,8 @@ function ledgerCardValue(row, key, kind) {
   return row[key] || "";
 }
 
-function ledgerStatusClass(status) {
-  return `is-${String(status || "inactive").toLowerCase().replace(/\s+/g, "-")}`;
-}
-
 function bankIsActive(row) {
-  return row?.status !== "Inactive";
+  return row?.activity === "Active";
 }
 
 function BankAccounts({ date, brands, revision }) {

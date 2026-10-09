@@ -27,6 +27,9 @@ _TAG_RE = re.compile(r"<span[^>]*>(.*?)</span>", re.I)
 _HTML_RE = re.compile(r"<[^>]+>")
 _lock = threading.Lock()
 _cache_lock = threading.Lock()
+_bank_status_lock = threading.Lock()
+_BANK_STATUS_TTL = 30.0
+_bank_status_cache: dict[int, tuple[float, set[tuple[str, str]]]] = {}
 _cache: dict[tuple[str, str, str], dict] = {}
 _http_local = threading.local()
 _TRANSIENT = {"ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout"}
@@ -577,6 +580,94 @@ _LEDGER_ZERO_COLUMNS = {
 }
 
 
+def _bank_key(bank_name: str, account_name: str) -> tuple[str, str]:
+    return (
+        " ".join(str(bank_name or "").casefold().split()),
+        " ".join(str(account_name or "").casefold().split()),
+    )
+
+
+def _active_bank_keys(brand: Brand | None) -> set[tuple[str, str]]:
+    """Bank code and account name pairs the finance API currently marks ACTIVE.
+
+    Each brand's /banks/getBank list has one active account. All brands are
+    combined when the sheet is not filtered to a single brand. A short cache
+    keeps the ledger from calling every brand on each refresh.
+    """
+    brands = [brand] if brand is not None else list(Brand.objects.filter(is_active=True))
+    now = time.monotonic()
+    keys: set[tuple[str, str]] = set()
+    stale: list[Brand] = []
+    with _bank_status_lock:
+        for item in brands:
+            cached = _bank_status_cache.get(item.pk)
+            if cached and now - cached[0] < _BANK_STATUS_TTL:
+                keys |= cached[1]
+            else:
+                stale.append(item)
+    if not stale:
+        return keys
+    loaded = _load_active_banks(stale)
+    with _bank_status_lock:
+        for item in stale:
+            fresh = loaded.get(item.pk)
+            if fresh is None:
+                previous = _bank_status_cache.get(item.pk)
+                if previous:
+                    keys |= previous[1]
+                continue
+            _bank_status_cache[item.pk] = (time.monotonic(), fresh)
+            keys |= fresh
+    return keys
+
+
+def _load_active_banks(brands: list[Brand]) -> dict[int, set[tuple[str, str]] | None]:
+    def load(item: Brand) -> tuple[int, set[tuple[str, str]] | None]:
+        close_old_connections()
+        try:
+            return item.pk, _fetch_active_banks(item)
+        except (requests.RequestException, ValueError, TypeError):
+            return item.pk, None
+
+    if len(brands) == 1:
+        brand_id, keys = load(brands[0])
+        return {brand_id: keys}
+    workers = min(8, len(brands))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bank-status") as pool:
+        return dict(pool.map(load, brands))
+
+
+def _fetch_active_banks(brand: Brand) -> set[tuple[str, str]]:
+    if not brand.domain or not brand.token or not brand.merchant_id:
+        return set()
+    url = brand.domain.rstrip("/") + "/api/v1/index.php"
+    response = _post(
+        url,
+        {
+            "module": "/banks/getBank",
+            "accessId": brand.access_id,
+            "accessToken": brand.token,
+            "merchantId": brand.merchant_id,
+        },
+    )
+    body = response.json()
+    if str(body.get("status") or "") != "SUCCESS":
+        raise ValueError("The brand bank list was refused")
+    data = body.get("data")
+    rows = data if isinstance(data, list) else []
+    active: set[tuple[str, str]] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().upper() != "ACTIVE":
+            continue
+        code = str(item.get("code") or "").strip()
+        account = str(item.get("accountName") or "").strip()
+        if code and account:
+            active.add(_bank_key(code, account))
+    return active
+
+
 def bank_ledger(day: date, brand_name: str = "All") -> dict:
     """Bank accounts for the selected brand, or every brand when the name is All.
 
@@ -679,6 +770,7 @@ def _ledger_rows(day: date, brand: Brand | None = None) -> list[dict]:
         (item.bank_name, item.account_name): item
         for item in BankLedgerSetting.objects.all()
     }
+    active_keys = _active_bank_keys(brand)
     rows = []
     for key in set(prior) | set(current):
         bank_name, account_name = key
@@ -696,6 +788,7 @@ def _ledger_rows(day: date, brand: Brand | None = None) -> list[dict]:
             {
                 "bank_name": bank_name,
                 "account_name": account_name,
+                "activity": "Active" if _bank_key(bank_name, account_name) in active_keys else "Inactive",
                 "status": chosen or _ledger_status(deposit_count, withdraw_count),
                 "opening": _money_text(opening),
                 "closing": _money_text(opening + deposits + withdrawals),
@@ -743,6 +836,7 @@ def bank_ledger_day(day: date, bank_name: str, account_name: str, brand_name: st
     prior = _ledger_totals(base.filter(settled_at__lt=start))
     current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
     row = _ledger_account_payload(bank_name, account_name, prior, current)
+    row["activity"] = "Active" if _bank_key(bank_name, account_name) in _active_bank_keys(brand) else "Inactive"
     transactions = []
     settled_rows = (
         base.filter(settled_at__gte=start, settled_at__lt=end)
