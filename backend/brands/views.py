@@ -9,7 +9,15 @@ from rest_framework.views import APIView
 from brands import livecache
 from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
-from brands.services import bank_accounts, bank_ledger, load_dashboard, sync_day, transaction_record, update_bank_ledger
+from brands.services import (
+    bank_accounts,
+    bank_ledger,
+    bank_ledger_day,
+    load_dashboard,
+    sync_day,
+    transaction_record,
+    update_bank_ledger,
+)
 
 
 class BrandListView(APIView):
@@ -77,6 +85,22 @@ class BankLedgerView(APIView):
         except LookupError as exc:
             return Response({"detail": str(exc)}, status=404)
         return _live_response({"row": row})
+
+
+class BankLedgerDayView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        day = _parse_day(request.query_params.get("date"))
+        bank_name = str(request.query_params.get("bank_name") or "")
+        account_name = str(request.query_params.get("account_name") or "")
+        if not bank_name.strip() or not account_name.strip():
+            return Response({"detail": "Choose a bank account."}, status=400)
+        try:
+            payload = bank_ledger_day(day, bank_name, account_name)
+        except LookupError as exc:
+            return Response({"detail": str(exc)}, status=404)
+        return _live_response(payload)
 
 
 class TransactionDetailView(APIView):

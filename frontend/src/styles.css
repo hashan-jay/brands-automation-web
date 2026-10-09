@@ -758,6 +758,93 @@ button.stats-net.selected {
 .ledger-status.is-active { background: #b6d7a8; }
 .ledger-status.is-inactive { background: #f6b26b; }
 
+.ledger-row { cursor: pointer; }
+.ledger-table tbody tr:hover td.ledger-bank { background: #e6b8c8; }
+.ledger-table tbody tr:hover td.ledger-account { background: #f8fafc; }
+.ledger-table tbody tr:hover td.ledger-open,
+.ledger-table tbody tr:hover td.ledger-close,
+.ledger-table tbody tr:hover td.ledger-deposit { background: #d9ead3; }
+.ledger-table tbody tr:hover td.ledger-limit { background: #f4cccc; }
+.ledger-table tbody tr:hover td.ledger-withdraw { background: #f8d0d0; }
+.ledger-table tbody tr:hover td.ledger-later { background: #fff2cc; }
+.ledger-table tbody tr:hover td.ledger-status.is-block { background: #d9d9d9; }
+.ledger-table tbody tr:hover td.ledger-status.is-withdraw-only { background: #cfe2f3; }
+.ledger-table tbody tr:hover td.ledger-status.is-deposit-only { background: #d9ead3; }
+.ledger-table tbody tr:hover td.ledger-status.is-both { background: #fff2cc; }
+.ledger-table tbody tr:hover td.ledger-status.is-active { background: #b6d7a8; }
+.ledger-table tbody tr:hover td.ledger-status.is-inactive { background: #f6b26b; }
+
+.modal.bank-day {
+  width: min(1180px, 100%);
+  max-height: min(90vh, 920px);
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 14px;
+}
+
+.bank-day-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.bank-day-tools .date-button { width: 180px; }
+.bank-day-tools .modal-close { margin-bottom: 0; }
+
+.bank-day-body {
+  overflow: auto;
+  min-height: 0;
+  margin-top: 8px;
+}
+
+.bank-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px;
+}
+
+.bank-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #f8fafc;
+}
+
+.bank-card span {
+  display: block;
+  color: #5b6b7c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.bank-card strong {
+  display: block;
+  margin-top: 4px;
+  color: #0f2744;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.bank-card .up { color: #15803d; }
+.bank-card .down { color: #b91c1c; }
+.bank-card.card-opening,
+.bank-card.card-closing,
+.bank-card.card-deposit { background: #eef8ea; }
+.bank-card.card-withdraw,
+.bank-card.card-limit { background: #fdecec; }
+.bank-card.card-bank_name { background: #f8e8ee; }
+.bank-card.card-transfer_in,
+.bank-card.card-pending,
+.bank-card.card-complete,
+.bank-card.card-transfer_out,
+.bank-card.card-cash_in,
+.bank-card.card-cash_out { background: #fff8e6; }
+
+.bank-day-table { max-height: 340px; }
+
 @media (max-width: 1100px) {
   .widgets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -695,6 +695,81 @@ def _ledger_groups(queryset) -> dict[tuple[str, str], dict]:
     }
 
 
+def bank_ledger_day(day: date, bank_name: str, account_name: str) -> dict:
+    """One bank account for one Sydney day: the sheet figures and that day's transactions.
+
+    The figures use the same opening, closing, deposit, and withdrawal rules as the
+    balance sheet. Transactions are the completed deposits and withdrawals that
+    settled on that day for this bank and account name.
+    """
+    bank_name = bank_name.strip()
+    account_name = account_name.strip()
+    if not _ledger_account_exists(bank_name, account_name):
+        raise LookupError("That bank account was not found.")
+    start, end = _sydney_bounds(day)
+    base = _ledger_account_queryset(bank_name, account_name)
+    prior = _ledger_totals(base.filter(settled_at__lt=start))
+    current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
+    row = _ledger_account_payload(bank_name, account_name, prior, current)
+    transactions = []
+    settled_rows = (
+        base.filter(settled_at__gte=start, settled_at__lt=end)
+        .select_related("brand")
+        .order_by("-settled_at", "-external_id")
+    )
+    for item in settled_rows:
+        payload = item.display()
+        payload["detail"] = item.detail or ""
+        payload["time"] = _clock(item.processed_at or item.created_at)
+        transactions.append(payload)
+    return {"date": day.isoformat(), "row": row, "transactions": transactions}
+
+
+def _ledger_account_queryset(bank_name: str, account_name: str):
+    return (
+        Transaction.objects.filter(
+            status="COMPLETED",
+            type__in=("DEPOSIT", "WITHDRAW"),
+            bank_name=bank_name,
+            bank_account_name=account_name,
+        )
+        .annotate(settled_at=Coalesce("processed_at", "created_at"))
+    )
+
+
+def _ledger_totals(queryset) -> dict:
+    zero = Decimal("0.00")
+    return queryset.aggregate(
+        deposits=Coalesce(Sum("amount", filter=Q(type="DEPOSIT")), zero, output_field=_MONEY_FIELD),
+        withdrawals=Coalesce(Sum("amount", filter=Q(type="WITHDRAW")), zero, output_field=_MONEY_FIELD),
+        deposit_count=Count("id", filter=Q(type="DEPOSIT")),
+        withdraw_count=Count("id", filter=Q(type="WITHDRAW")),
+    )
+
+
+def _ledger_account_payload(bank_name: str, account_name: str, prior: dict, current: dict) -> dict:
+    zero = Decimal("0.00")
+    opening = (prior["deposits"] or zero) + (prior["withdrawals"] or zero)
+    deposits = current["deposits"] or zero
+    withdrawals = current["withdrawals"] or zero
+    deposit_count = int(prior["deposit_count"] or 0) + int(current["deposit_count"] or 0)
+    withdraw_count = int(prior["withdraw_count"] or 0) + int(current["withdraw_count"] or 0)
+    setting = BankLedgerSetting.objects.filter(bank_name=bank_name, account_name=account_name).first()
+    chosen = setting.status if setting and setting.status in LEDGER_STATUSES else ""
+    limit_amount = setting.limit_amount if setting else None
+    return {
+        "bank_name": bank_name,
+        "account_name": account_name,
+        "status": chosen or _ledger_status(deposit_count, withdraw_count),
+        "opening": _money_text(opening),
+        "closing": _money_text(opening + deposits + withdrawals),
+        "limit": _money_text(limit_amount) if limit_amount is not None else None,
+        "deposit": _money_text(deposits),
+        "withdraw": _money_text(withdrawals),
+        **_LEDGER_ZERO_COLUMNS,
+    }
+
+
 def _ledger_status(deposit_count: int, withdraw_count: int) -> str:
     if deposit_count and withdraw_count:
         return "Both"

@@ -466,11 +466,29 @@ function TransactionDialog({ request, onClose }) {
 
 const LEDGER_STATUSES = ["Block", "Withdraw only", "Deposit only", "Both", "Active", "Inactive"];
 
+const LEDGER_CARDS = [
+  ["status", "Status", "text"],
+  ["bank_name", "Bank name", "text"],
+  ["account_name", "Bank account name", "text"],
+  ["opening", "Opening balance", "money"],
+  ["closing", "Closing balance", "money"],
+  ["limit", "Limit", "limit"],
+  ["deposit", "Deposit", "money"],
+  ["withdraw", "Withdraw", "money"],
+  ["transfer_in", "Transfer in", "money"],
+  ["pending", "Pending", "money"],
+  ["complete", "Complete", "money"],
+  ["transfer_out", "Transfer out", "money"],
+  ["cash_in", "Cash in", "money"],
+  ["cash_out", "Cash out", "money"],
+];
+
 function BankLedger({ date, revision }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [opened, setOpened] = useState(null);
   const request = useRef(0);
   const skipSave = useRef(false);
 
@@ -594,8 +612,15 @@ function BankLedger({ date, revision }) {
               const editingLimit =
                 editing && editing.bank_name === row.bank_name && editing.account_name === row.account_name;
               return (
-                <tr key={`${row.bank_name}\u0000${row.account_name}`}>
-                  <td className={`ledger-status ${ledgerStatusClass(row.status)}`}>
+                <tr
+                  key={`${row.bank_name}\u0000${row.account_name}`}
+                  className="ledger-row"
+                  onClick={() => setOpened({ bank_name: row.bank_name, account_name: row.account_name })}
+                >
+                  <td
+                    className={`ledger-status ${ledgerStatusClass(row.status)}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <select
                       aria-label={`Status for ${row.account_name}`}
                       value={row.status}
@@ -610,7 +635,7 @@ function BankLedger({ date, revision }) {
                   <td className="ledger-account">{row.account_name}</td>
                   <td className="ledger-open">{money(row.opening)}</td>
                   <td className="ledger-close">{money(row.closing)}</td>
-                  <td className="ledger-limit">
+                  <td className="ledger-limit" onClick={(event) => event.stopPropagation()}>
                     {editingLimit ? (
                       <input
                         aria-label={`Limit for ${row.account_name}`}
@@ -648,8 +673,140 @@ function BankLedger({ date, revision }) {
           </tbody>
         </table>
       </div>
+      {opened && (
+        <BankDayDialog
+          key={`${opened.bank_name}\u0000${opened.account_name}`}
+          account={opened}
+          revision={revision}
+          onClose={() => setOpened(null)}
+        />
+      )}
     </section>
   );
+}
+
+function BankDayDialog({ account, revision, onClose }) {
+  const [day, setDay] = useState(today);
+  const [state, setState] = useState({ status: "loading", body: null, error: "" });
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const id = ++requestId.current;
+    let stopped = false;
+    setState((current) => ({
+      status: "loading",
+      body: current.body?.date === day ? current.body : null,
+      error: "",
+    }));
+    const params = new URLSearchParams({
+      date: day,
+      bank_name: account.bank_name,
+      account_name: account.account_name,
+    });
+    api(`/api/bank-ledger/day/?${params.toString()}`)
+      .then((body) => {
+        if (stopped || id !== requestId.current) return;
+        if (body?.row?.bank_name !== account.bank_name || body?.row?.account_name !== account.account_name) {
+          setState({ status: "error", body: null, error: "The bank account details did not match." });
+          return;
+        }
+        setState({ status: "ready", body, error: "" });
+      })
+      .catch((err) => {
+        if (!stopped && id === requestId.current) setState({ status: "error", body: null, error: err.message });
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [account, day, revision]);
+
+  const row = state.body?.row;
+  const transactions = state.body?.transactions || [];
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="modal bank-day" role="dialog" aria-modal="true" aria-labelledby="bank-day-title">
+        <div className="modal-head">
+          <div>
+            <h2 id="bank-day-title">
+              {account.bank_name} · {account.account_name}
+            </h2>
+            <p>All brands · {formatDay(day)}</p>
+          </div>
+          <div className="bank-day-tools">
+            <DateField value={day} onChange={setDay} />
+            <button type="button" className="modal-close" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+        <div className="bank-day-body">
+          {state.status === "error" && <p className="form-error">{state.error}</p>}
+          {state.status === "loading" && !row && <p className="bank-hint">Loading this bank…</p>}
+          {row && (
+            <div className="bank-cards">
+              {LEDGER_CARDS.map(([key, label, kind]) => (
+                <article key={key} className={`bank-card card-${key}`}>
+                  <span>{label}</span>
+                  <strong className={kind === "money" ? amountTone(row[key]) : ""}>{ledgerCardValue(row, key, kind)}</strong>
+                </article>
+              ))}
+            </div>
+          )}
+          <section className="detail-section">
+            <h3>
+              Transactions
+              {state.status === "ready" ? ` · ${transactions.length.toLocaleString()}` : ""}
+            </h3>
+            {state.status === "ready" && transactions.length === 0 && (
+              <p className="bank-hint">No transactions for this bank account on this date.</p>
+            )}
+            {transactions.length > 0 && (
+              <div className="table-wrap bank-day-table">
+                <table>
+                  <thead>
+                    <tr>
+                      {COLUMNS.map(([key, label]) => (
+                        <th key={key}>{label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((item) => (
+                      <tr key={`${item.brand}-${item.id}`} className={rowClass(item)}>
+                        {COLUMNS.map(([key]) => (
+                          <td key={key}>{item[key]}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ledgerCardValue(row, key, kind) {
+  if (kind === "limit") return row.limit == null ? "N/A" : money(row.limit);
+  if (kind === "money") return money(row[key]);
+  return row[key] || "";
 }
 
 function ledgerStatusClass(status) {
