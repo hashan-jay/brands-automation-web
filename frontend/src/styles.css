@@ -806,13 +806,21 @@ button.stats-net.selected {
   font-weight: 800;
 }
 
-.ledger-table tr.ledger-total .ledger-total-label {
+.ledger-table tr.ledger-total .ledger-total-label,
+.ledger-table tr.ledger-total .ledger-total-count {
   background: #1f4e79;
   color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.ledger-table tr.ledger-total .ledger-total-label {
   text-align: left;
   padding-left: 12px;
-  letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.ledger-table tr.ledger-total .ledger-total-count {
+  text-align: center;
 }
 
 .ledger-row { cursor: pointer; }
@@ -830,6 +838,38 @@ button.stats-net.selected {
 .ledger-table tbody tr:hover td.ledger-status.is-both { background: #fff2cc; }
 .ledger-table tbody tr:hover td.ledger-status.is-active { background: #b6d7a8; }
 .ledger-table tbody tr:hover td.ledger-status.is-inactive { background: #f6b26b; }
+
+.ledger-activity-head {
+  min-width: 128px;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.ledger-table tbody tr.is-bank-active td,
+.ledger-table tbody tr.is-bank-active:hover td {
+  background: #d9ead3;
+  color: #14532d;
+}
+
+.ledger-table tbody tr.is-bank-inactive td,
+.ledger-table tbody tr.is-bank-inactive:hover td {
+  background: #f8d0d0;
+  color: #7f1d1d;
+}
+
+.ledger-table tbody tr.is-bank-active td.ledger-activity,
+.ledger-table tbody tr.is-bank-active:hover td.ledger-activity {
+  background: #3d8b40;
+  color: #fff;
+  font-weight: 800;
+}
+
+.ledger-table tbody tr.is-bank-inactive td.ledger-activity,
+.ledger-table tbody tr.is-bank-inactive:hover td.ledger-activity {
+  background: #c0392b;
+  color: #fff;
+  font-weight: 800;
+}
 
 .modal.bank-day {
   position: fixed;

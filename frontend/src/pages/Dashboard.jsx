@@ -498,6 +498,15 @@ function BankLedger({ date, brand, revision }) {
   const totalScroll = useRef(null);
   const [columnWidths, setColumnWidths] = useState([]);
   const totals = useMemo(() => ledgerTotals(rows), [rows]);
+  const orderedRows = useMemo(() => {
+    const active = [];
+    const inactive = [];
+    for (const row of rows) {
+      if (bankIsActive(row)) active.push(row);
+      else inactive.push(row);
+    }
+    return [...active, ...inactive];
+  }, [rows]);
 
   useLayoutEffect(() => {
     const head = tableHead.current;
@@ -603,6 +612,7 @@ function BankLedger({ date, brand, revision }) {
         <table className="ledger-table">
           <thead>
             <tr ref={tableHead}>
+              <th className="ledger-activity-head">Bank Active/Inactive</th>
               <th>STATUS</th>
               <th>BANK NAME</th>
               <th>BANK ACCOUNT NAME</th>
@@ -622,27 +632,29 @@ function BankLedger({ date, brand, revision }) {
           <tbody>
             {loading && rows.length === 0 && (
               <tr>
-                <td className="ledger-empty" colSpan={14}>
+                <td className="ledger-empty" colSpan={15}>
                   Loading bank balances…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="ledger-empty" colSpan={14}>
+                <td className="ledger-empty" colSpan={15}>
                   No bank accounts for this date.
                 </td>
               </tr>
             )}
-            {rows.map((row) => {
+            {orderedRows.map((row) => {
               const editingLimit =
                 editing && editing.bank_name === row.bank_name && editing.account_name === row.account_name;
+              const active = bankIsActive(row);
               return (
                 <tr
                   key={`${row.bank_name}\u0000${row.account_name}`}
-                  className="ledger-row"
+                  className={`ledger-row ${active ? "is-bank-active" : "is-bank-inactive"}`}
                   onClick={() => setOpened({ bank_name: row.bank_name, account_name: row.account_name })}
                 >
+                  <td className={`ledger-activity ${active ? "is-active" : "is-inactive"}`}>{active ? "Active" : "Inactive"}</td>
                   <td
                     className={`ledger-status ${ledgerStatusClass(row.status)}`}
                     onClick={(event) => event.stopPropagation()}
@@ -712,8 +724,18 @@ function BankLedger({ date, brand, revision }) {
             </colgroup>
             <tbody>
               <tr className="ledger-total">
-                <td className="ledger-total-label" colSpan={3}>
-                  Total
+                <td
+                  className="ledger-total-count"
+                  title={`${totals.activeCount.toLocaleString()} active, ${totals.inactiveCount.toLocaleString()} inactive`}
+                >
+                  {totals.activeCount.toLocaleString()} / {totals.inactiveCount.toLocaleString()}
+                </td>
+                <td className="ledger-total-label">Total</td>
+                <td className="ledger-total-count" title={`${totals.bankCount.toLocaleString()} bank names`}>
+                  {totals.bankCount.toLocaleString()}
+                </td>
+                <td className="ledger-total-count" title={`${totals.accountCount.toLocaleString()} bank accounts`}>
+                  {totals.accountCount.toLocaleString()}
                 </td>
                 <td className="ledger-open">{money(totals.opening)}</td>
                 <td className="ledger-close">{money(totals.closing)}</td>
@@ -882,6 +904,10 @@ function ledgerTotals(rows) {
   }
   const limits = rows.filter((row) => row.limit != null);
   totals.limit = limits.length ? fromCents(limits.reduce((sum, row) => sum + cents(row.limit), 0)) : null;
+  totals.bankCount = new Set(rows.map((row) => row.bank_name).filter(Boolean)).size;
+  totals.accountCount = rows.filter((row) => row.account_name).length;
+  totals.activeCount = rows.filter((row) => bankIsActive(row)).length;
+  totals.inactiveCount = rows.length - totals.activeCount;
   return totals;
 }
 
@@ -909,6 +935,10 @@ function ledgerCardValue(row, key, kind) {
 
 function ledgerStatusClass(status) {
   return `is-${String(status || "inactive").toLowerCase().replace(/\s+/g, "-")}`;
+}
+
+function bankIsActive(row) {
+  return row?.status !== "Inactive";
 }
 
 function BankAccounts({ date, brands, revision }) {
