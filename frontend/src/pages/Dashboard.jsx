@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 
 const COLUMNS = [
@@ -491,6 +491,29 @@ function BankLedger({ date, revision }) {
   const [opened, setOpened] = useState(null);
   const request = useRef(0);
   const skipSave = useRef(false);
+  const tableHead = useRef(null);
+  const tableScroll = useRef(null);
+  const totalScroll = useRef(null);
+  const [columnWidths, setColumnWidths] = useState([]);
+  const totals = useMemo(() => ledgerTotals(rows), [rows]);
+
+  useLayoutEffect(() => {
+    const head = tableHead.current;
+    if (!head) return;
+    const measure = () => {
+      setColumnWidths([...head.children].map((cell) => cell.getBoundingClientRect().width));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(head);
+    return () => observer.disconnect();
+  }, [rows]);
+
+  function syncTotalScroll() {
+    if (tableScroll.current && totalScroll.current) {
+      totalScroll.current.scrollLeft = tableScroll.current.scrollLeft;
+    }
+  }
 
   useEffect(() => {
     const id = ++request.current;
@@ -573,10 +596,10 @@ function BankLedger({ date, revision }) {
         </p>
       </div>
       {error && <p className="form-error">{error}</p>}
-      <div className="ledger-wrap">
+      <div className="ledger-wrap" ref={tableScroll} onScroll={syncTotalScroll}>
         <table className="ledger-table">
           <thead>
-            <tr>
+            <tr ref={tableHead}>
               <th>STATUS</th>
               <th>BANK NAME</th>
               <th>BANK ACCOUNT NAME</th>
@@ -673,6 +696,38 @@ function BankLedger({ date, revision }) {
           </tbody>
         </table>
       </div>
+      {rows.length > 0 && (
+        <div className="ledger-total-wrap" ref={totalScroll}>
+          <table
+            className="ledger-table ledger-total-table"
+            style={{ width: columnWidths.reduce((sum, width) => sum + width, 0) || undefined }}
+          >
+            <colgroup>
+              {columnWidths.map((width, index) => (
+                <col key={index} style={{ width }} />
+              ))}
+            </colgroup>
+            <tbody>
+              <tr className="ledger-total">
+                <td className="ledger-total-label" colSpan={3}>
+                  Total
+                </td>
+                <td className="ledger-open">{money(totals.opening)}</td>
+                <td className="ledger-close">{money(totals.closing)}</td>
+                <td className="ledger-limit">{totals.limit == null ? "N/A" : money(totals.limit)}</td>
+                <td className="ledger-deposit">{money(totals.deposit)}</td>
+                <td className="ledger-withdraw">{money(totals.withdraw)}</td>
+                <td className="ledger-later">{money(totals.transfer_in)}</td>
+                <td className="ledger-later">{money(totals.pending)}</td>
+                <td className="ledger-later">{money(totals.complete)}</td>
+                <td className="ledger-later">{money(totals.transfer_out)}</td>
+                <td className="ledger-later">{money(totals.cash_in)}</td>
+                <td className="ledger-later">{money(totals.cash_out)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
       {opened && (
         <BankDayDialog
           key={`${opened.bank_name}\u0000${opened.account_name}`}
@@ -801,6 +856,44 @@ function BankDayDialog({ account, revision, onClose }) {
       </div>
     </div>
   );
+}
+
+function ledgerTotals(rows) {
+  const keys = [
+    "opening",
+    "closing",
+    "deposit",
+    "withdraw",
+    "transfer_in",
+    "pending",
+    "complete",
+    "transfer_out",
+    "cash_in",
+    "cash_out",
+  ];
+  const totals = {};
+  for (const key of keys) {
+    totals[key] = fromCents(rows.reduce((sum, row) => sum + cents(row[key]), 0));
+  }
+  const limits = rows.filter((row) => row.limit != null);
+  totals.limit = limits.length ? fromCents(limits.reduce((sum, row) => sum + cents(row.limit), 0)) : null;
+  return totals;
+}
+
+function cents(value) {
+  const text = String(value ?? "0").replace(/,/g, "").trim();
+  if (!text || text.toUpperCase() === "N/A") return 0;
+  const negative = text.startsWith("-");
+  const [whole, fraction = ""] = text.replace("-", "").split(".");
+  const amount = Number(whole || "0") * 100 + Number(`${fraction}00`.slice(0, 2));
+  return negative ? -amount : amount;
+}
+
+function fromCents(amount) {
+  const negative = amount < 0;
+  const absolute = Math.abs(amount);
+  const text = `${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
+  return negative ? `-${text}` : text;
 }
 
 function ledgerCardValue(row, key, kind) {
