@@ -101,6 +101,32 @@ class CompanyBank(models.Model):
         return self.account_name or self.external_id
 
 
+class BankLedgerSetting(models.Model):
+    """Manual status and limit for one bank account. Balances are not stored here."""
+
+    STATUSES = (
+        ("Block", "Block"),
+        ("Withdraw only", "Withdraw only"),
+        ("Deposit only", "Deposit only"),
+        ("Both", "Both"),
+        ("Active", "Active"),
+        ("Inactive", "Inactive"),
+    )
+
+    bank_name = models.CharField(max_length=128)
+    account_name = models.CharField(max_length=255)
+    status = models.CharField(max_length=32, blank=True, choices=STATUSES)
+    limit_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["bank_name", "account_name"], name="uniq_bank_ledger_account"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.bank_name} · {self.account_name}"
+
+
 def sydney_today():
     return datetime.now(SYDNEY).date()
 

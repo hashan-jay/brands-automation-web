@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from brands import livecache
 from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
-from brands.services import bank_accounts, load_dashboard, sync_day, transaction_record
+from brands.services import bank_accounts, bank_ledger, load_dashboard, sync_day, transaction_record, update_bank_ledger
 
 
 class BrandListView(APIView):
@@ -48,6 +48,37 @@ class BankAccountsView(APIView):
         return _live_response(bank_accounts(day, brand_name, bank_name))
 
 
+class BankLedgerView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        day = _parse_day(request.query_params.get("date"))
+        return _live_response(bank_ledger(day))
+
+    def post(self, request):
+        day = _parse_day(request.data.get("date"))
+        bank_name = str(request.data.get("bank_name") or "")
+        account_name = str(request.data.get("account_name") or "")
+        fields = request.data if isinstance(request.data, dict) else {}
+        status = str(fields["status"]) if "status" in fields and fields.get("status") is not None else None
+        set_limit = "limit" in fields
+        try:
+            limit = _parse_limit(fields.get("limit")) if set_limit else None
+            row = update_bank_ledger(
+                day,
+                bank_name,
+                account_name,
+                status=status,
+                limit=limit,
+                set_limit=set_limit,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        except LookupError as exc:
+            return Response({"detail": str(exc)}, status=404)
+        return _live_response({"row": row})
+
+
 class TransactionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -78,6 +109,19 @@ def _refused_ip(errors: list[str]) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def _parse_limit(value: object) -> Decimal | None:
+    text = str(value if value is not None else "").strip().replace(",", "")
+    if text.upper() in {"", "N/A"}:
+        return None
+    try:
+        amount = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError("Enter a limit amount, or leave it blank for N/A.") from exc
+    if not amount.is_finite() or abs(amount) >= Decimal("1000000000000"):
+        raise ValueError("Enter a limit amount, or leave it blank for N/A.")
+    return amount.quantize(Decimal("0.01"))
 
 
 def _parse_day(value: object):

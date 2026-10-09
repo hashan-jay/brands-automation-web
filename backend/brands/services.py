@@ -13,12 +13,12 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from django.db import close_old_connections, transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, DecimalField, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from brands import livecache
-from brands.models import SYDNEY, Brand, BrandSync, CompanyBank, Transaction, _clock
+from brands.models import SYDNEY, BankLedgerSetting, Brand, BrandSync, CompanyBank, Transaction, _clock
 
 UTC = ZoneInfo("UTC")
 
@@ -563,6 +563,146 @@ def _sydney_bounds(day: date) -> tuple[datetime, datetime]:
 
 def _money_text(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}"
+
+
+LEDGER_STATUSES = ("Block", "Withdraw only", "Deposit only", "Both", "Active", "Inactive")
+_MONEY_FIELD = DecimalField(max_digits=16, decimal_places=2)
+_LEDGER_ZERO_COLUMNS = {
+    "transfer_in": "0.00",
+    "pending": "0.00",
+    "complete": "0.00",
+    "transfer_out": "0.00",
+    "cash_in": "0.00",
+    "cash_out": "0.00",
+}
+
+
+def bank_ledger(day: date) -> dict:
+    """Every bank account used by any brand, with that date's balances.
+
+    Opening balance is everything settled before this Sydney day, which is the
+    previous day's balance at 11:59 PM. Closing balance is the opening balance
+    plus this day's completed deposits and withdrawals. The next day's opening
+    balance is therefore this closing balance. Transfer, pending, complete, and
+    cash columns are fixed at 0.00 and are not part of either balance.
+    """
+    return {"date": day.isoformat(), "rows": _ledger_rows(day)}
+
+
+def update_bank_ledger(
+    day: date,
+    bank_name: str,
+    account_name: str,
+    *,
+    status: str | None = None,
+    limit: Decimal | None = None,
+    set_limit: bool = False,
+) -> dict:
+    bank_name = bank_name.strip()
+    account_name = account_name.strip()
+    if status is not None and status not in LEDGER_STATUSES:
+        raise ValueError("Choose a status from the list.")
+    if not _ledger_account_exists(bank_name, account_name):
+        raise LookupError("That bank account was not found.")
+    setting, _created = BankLedgerSetting.objects.get_or_create(
+        bank_name=bank_name,
+        account_name=account_name,
+    )
+    changed: list[str] = []
+    if status is not None and setting.status != status:
+        setting.status = status
+        changed.append("status")
+    if set_limit and setting.limit_amount != limit:
+        setting.limit_amount = limit
+        changed.append("limit_amount")
+    if changed:
+        setting.save(update_fields=changed)
+    row = next(
+        (item for item in _ledger_rows(day) if item["bank_name"] == bank_name and item["account_name"] == account_name),
+        None,
+    )
+    if row is None:
+        raise LookupError("That bank account was not found.")
+    return row
+
+
+def _ledger_account_exists(bank_name: str, account_name: str) -> bool:
+    return Transaction.objects.filter(
+        status="COMPLETED",
+        type__in=("DEPOSIT", "WITHDRAW"),
+        bank_name=bank_name,
+        bank_account_name=account_name,
+    ).exists()
+
+
+def _ledger_rows(day: date) -> list[dict]:
+    start, end = _sydney_bounds(day)
+    zero = Decimal("0.00")
+    base = (
+        Transaction.objects.filter(status="COMPLETED", type__in=("DEPOSIT", "WITHDRAW"))
+        .exclude(bank_name="")
+        .exclude(bank_account_name="")
+        .annotate(settled_at=Coalesce("processed_at", "created_at"))
+        .filter(settled_at__lt=end)
+    )
+    prior = _ledger_groups(base.filter(settled_at__lt=start))
+    current = _ledger_groups(base.filter(settled_at__gte=start))
+    settings = {
+        (item.bank_name, item.account_name): item
+        for item in BankLedgerSetting.objects.all()
+    }
+    rows = []
+    for key in set(prior) | set(current):
+        bank_name, account_name = key
+        before = prior.get(key)
+        today = current.get(key)
+        opening = (before["deposits"] + before["withdrawals"]) if before else zero
+        deposits = today["deposits"] if today else zero
+        withdrawals = today["withdrawals"] if today else zero
+        deposit_count = (before["deposit_count"] if before else 0) + (today["deposit_count"] if today else 0)
+        withdraw_count = (before["withdraw_count"] if before else 0) + (today["withdraw_count"] if today else 0)
+        setting = settings.get(key)
+        chosen = setting.status if setting and setting.status in LEDGER_STATUSES else ""
+        limit_amount = setting.limit_amount if setting else None
+        rows.append(
+            {
+                "bank_name": bank_name,
+                "account_name": account_name,
+                "status": chosen or _ledger_status(deposit_count, withdraw_count),
+                "opening": _money_text(opening),
+                "closing": _money_text(opening + deposits + withdrawals),
+                "limit": _money_text(limit_amount) if limit_amount is not None else None,
+                "deposit": _money_text(deposits),
+                "withdraw": _money_text(withdrawals),
+                **_LEDGER_ZERO_COLUMNS,
+            }
+        )
+    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold()))
+    return rows
+
+
+def _ledger_groups(queryset) -> dict[tuple[str, str], dict]:
+    zero = Decimal("0.00")
+    grouped = queryset.values("bank_name", "bank_account_name").annotate(
+        deposits=Coalesce(Sum("amount", filter=Q(type="DEPOSIT")), zero, output_field=_MONEY_FIELD),
+        withdrawals=Coalesce(Sum("amount", filter=Q(type="WITHDRAW")), zero, output_field=_MONEY_FIELD),
+        deposit_count=Count("id", filter=Q(type="DEPOSIT")),
+        withdraw_count=Count("id", filter=Q(type="WITHDRAW")),
+    )
+    return {
+        (row["bank_name"], row["bank_account_name"]): row
+        for row in grouped
+    }
+
+
+def _ledger_status(deposit_count: int, withdraw_count: int) -> str:
+    if deposit_count and withdraw_count:
+        return "Both"
+    if deposit_count:
+        return "Deposit only"
+    if withdraw_count:
+        return "Withdraw only"
+    return "Inactive"
 
 
 def bank_accounts(day: date, brand_name: str, bank_name: str) -> dict:

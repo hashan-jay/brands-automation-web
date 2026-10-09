@@ -172,6 +172,7 @@ export default function Dashboard() {
 
   return (
     <>
+    <BankLedger date={date} revision={data?.revision || ""} />
     <div className="workspace">
       <aside className="side">
         <label>
@@ -461,6 +462,198 @@ function TransactionDialog({ request, onClose }) {
       </div>
     </div>
   );
+}
+
+const LEDGER_STATUSES = ["Block", "Withdraw only", "Deposit only", "Both", "Active", "Inactive"];
+
+function BankLedger({ date, revision }) {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const request = useRef(0);
+  const skipSave = useRef(false);
+
+  useEffect(() => {
+    const id = ++request.current;
+    let stopped = false;
+    setLoading(true);
+    api(`/api/bank-ledger/?date=${encodeURIComponent(date)}`)
+      .then((next) => {
+        if (stopped || id !== request.current) return;
+        setRows(next?.rows || []);
+        setError("");
+      })
+      .catch((err) => {
+        if (!stopped && id === request.current) setError(err.message);
+      })
+      .finally(() => {
+        if (!stopped && id === request.current) setLoading(false);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [date, revision]);
+
+  function replaceRow(row) {
+    setRows((current) =>
+      current.map((item) =>
+        item.bank_name === row.bank_name && item.account_name === row.account_name ? row : item,
+      ),
+    );
+  }
+
+  async function save(row, body) {
+    const next = await api("/api/bank-ledger/", {
+      method: "POST",
+      body: { date, bank_name: row.bank_name, account_name: row.account_name, ...body },
+    });
+    if (next?.row) replaceRow(next.row);
+  }
+
+  async function changeStatus(row, status) {
+    const previous = rows;
+    replaceRow({ ...row, status });
+    try {
+      await save(row, { status });
+      setError("");
+    } catch (err) {
+      setRows(previous);
+      setError(err.message);
+    }
+  }
+
+  function startLimit(row) {
+    setEditing({ bank_name: row.bank_name, account_name: row.account_name, value: row.limit ?? "" });
+  }
+
+  async function finishLimit(row, input) {
+    if (skipSave.current) {
+      skipSave.current = false;
+      setEditing(null);
+      return;
+    }
+    const value = input.value;
+    setEditing(null);
+    const current = row.limit ?? "";
+    if (value.trim() === current) return;
+    try {
+      await save(row, { limit: value.trim() });
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="ledger">
+      <div className="ledger-intro">
+        <h2>Bank balances</h2>
+        <p>
+          All brands · {formatDay(date)}. Opening balance is the previous day at 11:59 PM. Closing balance is that
+          opening balance plus this day’s deposits and withdrawals.
+        </p>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      <div className="ledger-wrap">
+        <table className="ledger-table">
+          <thead>
+            <tr>
+              <th>STATUS</th>
+              <th>BANK NAME</th>
+              <th>BANK ACCOUNT NAME</th>
+              <th>OPENING BALANCE</th>
+              <th>CLOSING BALANCE</th>
+              <th>LIMIT</th>
+              <th>DEPOSIT</th>
+              <th>WITHDRAW</th>
+              <th>TRANSFER IN</th>
+              <th>PENDING</th>
+              <th>COMPLETE</th>
+              <th>TRANSFER OUT</th>
+              <th>CASH IN</th>
+              <th>CASH OUT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && rows.length === 0 && (
+              <tr>
+                <td className="ledger-empty" colSpan={14}>
+                  Loading bank balances…
+                </td>
+              </tr>
+            )}
+            {!loading && rows.length === 0 && (
+              <tr>
+                <td className="ledger-empty" colSpan={14}>
+                  No bank accounts for this date.
+                </td>
+              </tr>
+            )}
+            {rows.map((row) => {
+              const editingLimit =
+                editing && editing.bank_name === row.bank_name && editing.account_name === row.account_name;
+              return (
+                <tr key={`${row.bank_name}\u0000${row.account_name}`}>
+                  <td className={`ledger-status ${ledgerStatusClass(row.status)}`}>
+                    <select
+                      aria-label={`Status for ${row.account_name}`}
+                      value={row.status}
+                      onChange={(event) => changeStatus(row, event.target.value)}
+                    >
+                      {LEDGER_STATUSES.map((option) => (
+                        <option key={option}>{option}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="ledger-bank">{row.bank_name}</td>
+                  <td className="ledger-account">{row.account_name}</td>
+                  <td className="ledger-open">{money(row.opening)}</td>
+                  <td className="ledger-close">{money(row.closing)}</td>
+                  <td className="ledger-limit">
+                    {editingLimit ? (
+                      <input
+                        aria-label={`Limit for ${row.account_name}`}
+                        value={editing.value}
+                        autoFocus
+                        inputMode="decimal"
+                        placeholder="N/A"
+                        onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+                        onBlur={(event) => finishLimit(row, event.currentTarget)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                          if (event.key === "Escape") {
+                            skipSave.current = true;
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button type="button" onClick={() => startLimit(row)}>
+                        {row.limit == null ? "N/A" : money(row.limit)}
+                      </button>
+                    )}
+                  </td>
+                  <td className="ledger-deposit">{money(row.deposit)}</td>
+                  <td className="ledger-withdraw">{money(row.withdraw)}</td>
+                  <td className="ledger-later">{money(row.transfer_in)}</td>
+                  <td className="ledger-later">{money(row.pending)}</td>
+                  <td className="ledger-later">{money(row.complete)}</td>
+                  <td className="ledger-later">{money(row.transfer_out)}</td>
+                  <td className="ledger-later">{money(row.cash_in)}</td>
+                  <td className="ledger-later">{money(row.cash_out)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ledgerStatusClass(status) {
+  return `is-${String(status || "inactive").toLowerCase().replace(/\s+/g, "-")}`;
 }
 
 function BankAccounts({ date, brands, revision }) {
