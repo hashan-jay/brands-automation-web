@@ -567,8 +567,9 @@ button.stats-net.selected {
   position: fixed;
   inset: 0;
   z-index: 40;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   background: rgba(15, 39, 68, 0.45);
 }
@@ -775,12 +776,18 @@ button.stats-net.selected {
 .ledger-table tbody tr:hover td.ledger-status.is-inactive { background: #f6b26b; }
 
 .modal.bank-day {
-  width: min(1180px, 100%);
-  max-height: min(90vh, 920px);
-  overflow: visible;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(1180px, calc(100vw - 48px));
+  max-height: min(86vh, 900px);
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   padding-bottom: 14px;
+  margin: 0;
 }
 
 .bank-day-tools {
@@ -795,6 +802,7 @@ button.stats-net.selected {
 .bank-day-body {
   overflow: auto;
   min-height: 0;
+  flex: 1 1 auto;
   margin-top: 8px;
 }
 
