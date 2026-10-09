@@ -587,14 +587,17 @@ def _bank_key(bank_name: str, account_name: str) -> tuple[str, str]:
     )
 
 
-def _active_bank_keys(brand: Brand | None) -> set[tuple[str, str]]:
+def _active_bank_keys(brand: Brand | None = None, brands: list[Brand] | None = None) -> set[tuple[str, str]]:
     """Bank code and account name pairs the finance API currently marks ACTIVE.
 
-    Each brand's /banks/getBank list has one active account. All brands are
-    combined when the sheet is not filtered to a single brand. A short cache
-    keeps the ledger from calling every brand on each refresh.
+    Each brand's /banks/getBank list has one active account. A group or every
+    brand is combined when the sheet is not filtered to a single brand. A short
+    cache keeps the ledger from calling every brand on each refresh.
     """
-    brands = [brand] if brand is not None else list(Brand.objects.filter(is_active=True))
+    if brand is not None:
+        brands = [brand]
+    elif brands is None:
+        brands = list(Brand.objects.filter(is_active=True))
     now = time.monotonic()
     keys: set[tuple[str, str]] = set()
     stale: list[Brand] = []
@@ -668,20 +671,20 @@ def _fetch_active_banks(brand: Brand) -> set[tuple[str, str]]:
     return active
 
 
-def bank_ledger(day: date, brand_name: str = "All") -> dict:
-    """Bank accounts for the selected brand, or every brand when the name is All.
+def bank_ledger(day: date, brand_name: str = "All", group_name: str = "All") -> dict:
+    """Bank accounts for the selected group and brand.
 
     Opening balance is everything settled before this Sydney day, which is the
     previous day's balance at 11:59 PM. Closing balance is the opening balance
     plus this day's completed deposits and withdrawals. The next day's opening
-    balance is therefore this closing balance. A chosen brand counts only that
-    brand's completed deposits and withdrawals. Transfer, pending, complete, and
-    cash columns are fixed at 0.00 and are not part of either balance.
+    balance is therefore this closing balance. A chosen group or brand counts
+    only those completed deposits and withdrawals. Transfer, pending, complete,
+    and cash columns are fixed at 0.00 and are not part of either balance.
     """
-    brand, missing = _ledger_brand(brand_name)
+    brand, grouped, missing = _ledger_scope(group_name, brand_name)
     if missing:
         return {"date": day.isoformat(), "rows": []}
-    return {"date": day.isoformat(), "rows": _ledger_rows(day, brand)}
+    return {"date": day.isoformat(), "rows": _ledger_rows(day, brand, grouped)}
 
 
 def update_bank_ledger(
@@ -693,10 +696,11 @@ def update_bank_ledger(
     limit: Decimal | None = None,
     set_limit: bool = False,
     brand_name: str = "All",
+    group_name: str = "All",
 ) -> dict:
     bank_name = bank_name.strip()
     account_name = account_name.strip()
-    brand, missing = _ledger_brand(brand_name)
+    brand, grouped, missing = _ledger_scope(group_name, brand_name)
     if missing:
         raise LookupError("That brand was not found.")
     if status is not None and status not in LEDGER_STATUSES:
@@ -719,7 +723,7 @@ def update_bank_ledger(
     row = next(
         (
             item
-            for item in _ledger_rows(day, brand)
+            for item in _ledger_rows(day, brand, grouped)
             if item["bank_name"] == bank_name and item["account_name"] == account_name
         ),
         None,
@@ -727,6 +731,31 @@ def update_bank_ledger(
     if row is None:
         raise LookupError("That bank account was not found.")
     return row
+
+
+def _ledger_scope(group_name: str, brand_name: str) -> tuple[Brand | None, list[Brand] | None, bool]:
+    """Resolve the sheet's group and brand.
+
+    The brand is set when one brand is selected. The list is set when a group
+    is selected and the brand is All. Both are empty when every brand is in
+    scope. The last value is true when the group or brand is unknown.
+    """
+    group_name = (group_name or "All").strip() or "All"
+    brand_name = (brand_name or "All").strip() or "All"
+    known = {choice for choice, _label in Brand.GROUPS}
+    if group_name != "All" and group_name not in known:
+        return None, None, True
+    if brand_name != "All":
+        brand, missing = _ledger_brand(brand_name)
+        if missing or brand is None:
+            return None, None, True
+        if group_name != "All" and brand.group != group_name:
+            return None, None, True
+        return brand, None, False
+    if group_name == "All":
+        return None, None, False
+    grouped = list(Brand.objects.filter(is_active=True, group=group_name).order_by("sort_order", "name"))
+    return None, grouped, False
 
 
 def _ledger_brand(brand_name: str) -> tuple[Brand | None, bool]:
@@ -740,7 +769,12 @@ def _ledger_brand(brand_name: str) -> tuple[Brand | None, bool]:
     return brand, False
 
 
-def _ledger_account_exists(bank_name: str, account_name: str, brand: Brand | None = None) -> bool:
+def _ledger_account_exists(
+    bank_name: str,
+    account_name: str,
+    brand: Brand | None = None,
+    grouped: list[Brand] | None = None,
+) -> bool:
     rows = Transaction.objects.filter(
         status="COMPLETED",
         type__in=("DEPOSIT", "WITHDRAW"),
@@ -749,10 +783,12 @@ def _ledger_account_exists(bank_name: str, account_name: str, brand: Brand | Non
     )
     if brand is not None:
         rows = rows.filter(brand=brand)
+    elif grouped is not None:
+        rows = rows.filter(brand__in=grouped)
     return rows.exists()
 
 
-def _ledger_rows(day: date, brand: Brand | None = None) -> list[dict]:
+def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | None = None) -> list[dict]:
     start, end = _sydney_bounds(day)
     zero = Decimal("0.00")
     base = (
@@ -764,13 +800,15 @@ def _ledger_rows(day: date, brand: Brand | None = None) -> list[dict]:
     )
     if brand is not None:
         base = base.filter(brand=brand)
+    elif grouped is not None:
+        base = base.filter(brand__in=grouped)
     prior = _ledger_groups(base.filter(settled_at__lt=start))
     current = _ledger_groups(base.filter(settled_at__gte=start))
     settings = {
         (item.bank_name, item.account_name): item
         for item in BankLedgerSetting.objects.all()
     }
-    active_keys = _active_bank_keys(brand)
+    active_keys = _active_bank_keys(brand, grouped)
     rows = []
     for key in set(prior) | set(current):
         bank_name, account_name = key
@@ -816,7 +854,13 @@ def _ledger_groups(queryset) -> dict[tuple[str, str], dict]:
     }
 
 
-def bank_ledger_day(day: date, bank_name: str, account_name: str, brand_name: str = "All") -> dict:
+def bank_ledger_day(
+    day: date,
+    bank_name: str,
+    account_name: str,
+    brand_name: str = "All",
+    group_name: str = "All",
+) -> dict:
     """One bank account for one Sydney day: the sheet figures and that day's transactions.
 
     The figures use the same opening, closing, deposit, and withdrawal rules as the
@@ -826,17 +870,19 @@ def bank_ledger_day(day: date, bank_name: str, account_name: str, brand_name: st
     """
     bank_name = bank_name.strip()
     account_name = account_name.strip()
-    brand, missing = _ledger_brand(brand_name)
+    brand, grouped, missing = _ledger_scope(group_name, brand_name)
     if missing:
         raise LookupError("That brand was not found.")
-    if not _ledger_account_exists(bank_name, account_name, brand):
+    if not _ledger_account_exists(bank_name, account_name, brand, grouped):
         raise LookupError("That bank account was not found.")
     start, end = _sydney_bounds(day)
-    base = _ledger_account_queryset(bank_name, account_name, brand)
+    base = _ledger_account_queryset(bank_name, account_name, brand, grouped)
     prior = _ledger_totals(base.filter(settled_at__lt=start))
     current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
     row = _ledger_account_payload(bank_name, account_name, prior, current)
-    row["activity"] = "Active" if _bank_key(bank_name, account_name) in _active_bank_keys(brand) else "Inactive"
+    row["activity"] = (
+        "Active" if _bank_key(bank_name, account_name) in _active_bank_keys(brand, grouped) else "Inactive"
+    )
     transactions = []
     settled_rows = (
         base.filter(settled_at__gte=start, settled_at__lt=end)
@@ -851,7 +897,12 @@ def bank_ledger_day(day: date, bank_name: str, account_name: str, brand_name: st
     return {"date": day.isoformat(), "row": row, "transactions": transactions}
 
 
-def _ledger_account_queryset(bank_name: str, account_name: str, brand: Brand | None = None):
+def _ledger_account_queryset(
+    bank_name: str,
+    account_name: str,
+    brand: Brand | None = None,
+    grouped: list[Brand] | None = None,
+):
     rows = Transaction.objects.filter(
         status="COMPLETED",
         type__in=("DEPOSIT", "WITHDRAW"),
@@ -860,6 +911,8 @@ def _ledger_account_queryset(bank_name: str, account_name: str, brand: Brand | N
     )
     if brand is not None:
         rows = rows.filter(brand=brand)
+    elif grouped is not None:
+        rows = rows.filter(brand__in=grouped)
     return rows.annotate(settled_at=Coalesce("processed_at", "created_at"))
 
 

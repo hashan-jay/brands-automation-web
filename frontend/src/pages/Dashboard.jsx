@@ -68,6 +68,7 @@ function today() {
 
 export default function Dashboard() {
   const [brands, setBrands] = useState([]);
+  const [group, setGroup] = useState("All");
   const [brand, setBrand] = useState("All");
   const [date, setDate] = useState(today);
   const [type, setType] = useState("All types");
@@ -97,7 +98,7 @@ export default function Dashboard() {
     async function load() {
       if (loading) return;
       loading = true;
-      const params = new URLSearchParams({ date, brand, type, status });
+      const params = new URLSearchParams({ date, group, brand, type, status });
       if (revision.current) params.set("rev", revision.current);
       try {
         const next = await api(`/api/dashboard/?${params.toString()}`);
@@ -123,7 +124,7 @@ export default function Dashboard() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [brand, date, type, status, live]);
+  }, [group, brand, date, type, status, live]);
 
   function selectWidget(key, nextStatus, nextType) {
     if (focus === key) {
@@ -149,7 +150,7 @@ export default function Dashboard() {
     setError("");
     try {
       await api("/api/sync/", { method: "POST", body: { date } });
-      const params = new URLSearchParams({ date, brand, type, status });
+      const params = new URLSearchParams({ date, group, brand, type, status });
       const next = await api(`/api/dashboard/?${params.toString()}`);
       if (next?.revision) revision.current = String(next.revision);
       if (!next?.unchanged) setData(next);
@@ -169,15 +170,36 @@ export default function Dashboard() {
   const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other", "OTHER", "All types"]] : WIDGETS;
   const focusTitle = widgetTitle(focus, widgets);
   const brandSummary = data?.brand_summary || [];
+  const visibleBrands = brands.filter((item) => group === "All" || item.group === group);
+
+  function chooseGroup(next) {
+    setGroup(next);
+    if (next !== "All" && brand !== "All" && !brands.some((item) => item.name === brand && item.group === next)) {
+      setBrand("All");
+    }
+  }
 
   return (
     <>
+    <div className="group-filter" role="group" aria-label="Group">
+      {GROUPS.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          className={group === value ? "selected" : ""}
+          aria-pressed={group === value}
+          onClick={() => chooseGroup(value)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
     <div className="page-controls">
       <label>
         Brand
         <select value={brand} onChange={(event) => setBrand(event.target.value)}>
           <option>All</option>
-          {brands.map((item) => (
+          {visibleBrands.map((item) => (
             <option key={item.id}>{item.name}</option>
           ))}
         </select>
@@ -192,10 +214,10 @@ export default function Dashboard() {
       <p className="status">{statusText(live, refreshing, data)}</p>
       {error && <p className="form-error">{error}</p>}
     </div>
-    <BankLedger date={date} brand={brand} revision={data?.revision || ""} />
+    <BankLedger date={date} group={group} brand={brand} revision={data?.revision || ""} />
     <div className="workspace">
       <aside className="side">
-        <BankAccounts date={date} brands={brands} revision={data?.revision || ""} />
+        <BankAccounts date={date} brands={visibleBrands} revision={data?.revision || ""} />
       </aside>
 
       <section className="main">
@@ -299,7 +321,7 @@ export default function Dashboard() {
             <div>
               <h3>Statistics</h3>
               <p>
-                {brand} · {date} · {Number(bucket(stats, "row_count").count).toLocaleString()} transactions
+                {scopeLabel(group, brand)} · {date} · {Number(bucket(stats, "row_count").count).toLocaleString()} transactions
               </p>
             </div>
             <button
@@ -466,6 +488,13 @@ function TransactionDialog({ request, onClose }) {
   );
 }
 
+const GROUPS = [
+  ["All", "All groups"],
+  ["SOLO - KABOOM", "SOLO - KABOOM"],
+  ["GROUP AK", "GROUP AK"],
+  ["GROUP U", "GROUP U"],
+];
+
 const BANK_STATUS_FILTERS = [
   ["All", "All"],
   ["Deposit only", "Deposit Only"],
@@ -490,7 +519,7 @@ const LEDGER_CARDS = [
   ["cash_out", "Cash out", "money"],
 ];
 
-function BankLedger({ date, brand, revision }) {
+function BankLedger({ date, group, brand, revision }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -540,7 +569,7 @@ function BankLedger({ date, brand, revision }) {
     const id = ++request.current;
     let stopped = false;
     setLoading(true);
-    const params = new URLSearchParams({ date, brand });
+    const params = new URLSearchParams({ date, group, brand });
     api(`/api/bank-ledger/?${params.toString()}`)
       .then((next) => {
         if (stopped || id !== request.current) return;
@@ -556,7 +585,7 @@ function BankLedger({ date, brand, revision }) {
     return () => {
       stopped = true;
     };
-  }, [date, brand, revision]);
+  }, [date, group, brand, revision]);
 
   function replaceRow(row) {
     setRows((current) =>
@@ -569,7 +598,7 @@ function BankLedger({ date, brand, revision }) {
   async function save(row, body) {
     const next = await api("/api/bank-ledger/", {
       method: "POST",
-      body: { date, brand, bank_name: row.bank_name, account_name: row.account_name, ...body },
+      body: { date, group, brand, bank_name: row.bank_name, account_name: row.account_name, ...body },
     });
     if (next?.row) replaceRow(next.row);
   }
@@ -602,7 +631,7 @@ function BankLedger({ date, brand, revision }) {
         <div>
           <h2>Bank balances</h2>
           <p>
-            {brand === "All" ? "All brands" : brand} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
+            {scopeLabel(group, brand)} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
             Closing balance is that opening balance plus this day’s deposits and withdrawals.
           </p>
         </div>
@@ -758,6 +787,7 @@ function BankLedger({ date, brand, revision }) {
         <BankDayDialog
           key={`${opened.bank_name}\u0000${opened.account_name}`}
           account={opened}
+          group={group}
           brand={brand}
           revision={revision}
           onClose={() => setOpened(null)}
@@ -767,7 +797,7 @@ function BankLedger({ date, brand, revision }) {
   );
 }
 
-function BankDayDialog({ account, brand, revision, onClose }) {
+function BankDayDialog({ account, group, brand, revision, onClose }) {
   const [day, setDay] = useState(today);
   const [state, setState] = useState({ status: "loading", body: null, error: "" });
   const requestId = useRef(0);
@@ -790,6 +820,7 @@ function BankDayDialog({ account, brand, revision, onClose }) {
     }));
     const params = new URLSearchParams({
       date: day,
+      group,
       brand,
       bank_name: account.bank_name,
       account_name: account.account_name,
@@ -809,7 +840,7 @@ function BankDayDialog({ account, brand, revision, onClose }) {
     return () => {
       stopped = true;
     };
-  }, [account, brand, day, revision]);
+  }, [account, group, brand, day, revision]);
 
   const row = state.body?.row;
   const transactions = state.body?.transactions || [];
@@ -827,7 +858,7 @@ function BankDayDialog({ account, brand, revision, onClose }) {
             <h2 id="bank-day-title">
               {account.bank_name} · {account.account_name}
             </h2>
-            <p>{brand === "All" ? "All brands" : brand} · {formatDay(day)}</p>
+            <p>{scopeLabel(group, brand)} · {formatDay(day)}</p>
           </div>
           <div className="bank-day-tools">
             <DateField value={day} onChange={setDay} />
@@ -938,6 +969,12 @@ function bankIsActive(row) {
   return row?.activity === "Active";
 }
 
+function scopeLabel(group, brand) {
+  if (brand && brand !== "All") return brand;
+  if (group && group !== "All") return group;
+  return "All brands";
+}
+
 function BankAccounts({ date, brands, revision }) {
   const [game, setGame] = useState("");
   const [bankName, setBankName] = useState("");
@@ -947,6 +984,15 @@ function BankAccounts({ date, brands, revision }) {
   const [loading, setLoading] = useState(false);
   const request = useRef(0);
   const accountNameRef = useRef("");
+
+  useEffect(() => {
+    if (game && !brands.some((item) => item.name === game)) {
+      setGame("");
+      setBankName("");
+      setAccountName("");
+      setDirectory(null);
+    }
+  }, [brands, game]);
   accountNameRef.current = accountName;
 
   useEffect(() => {

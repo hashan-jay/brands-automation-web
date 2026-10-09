@@ -7,11 +7,21 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 
 
 class Brand(models.Model):
+    GROUP_SOLO = "SOLO - KABOOM"
+    GROUP_AK = "GROUP AK"
+    GROUP_U = "GROUP U"
+    GROUPS = (
+        (GROUP_SOLO, GROUP_SOLO),
+        (GROUP_AK, GROUP_AK),
+        (GROUP_U, GROUP_U),
+    )
+
     name = models.CharField(max_length=64, unique=True)
     domain = models.CharField(max_length=255)
     access_id = models.CharField(max_length=32)
     merchant_id = models.CharField(max_length=32, blank=True)
     token = models.CharField(max_length=128)
+    group = models.CharField(max_length=32, blank=True, choices=GROUPS)
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 

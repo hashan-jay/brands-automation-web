@@ -5,7 +5,7 @@ from brands.models import Brand, BrandSync, Transaction
 
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
-    list_display = ("name", "domain", "merchant_id", "is_active", "sort_order")
+    list_display = ("name", "group", "domain", "merchant_id", "is_active", "sort_order")
     search_fields = ("name", "domain")
 
 

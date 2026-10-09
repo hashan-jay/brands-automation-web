@@ -98,6 +98,30 @@ button {
 
 .app { min-height: 100vh; }
 
+.group-filter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 12px 0;
+}
+
+.group-filter button {
+  border: 1px solid #d6dee8;
+  border-radius: 12px;
+  padding: 16px 12px;
+  background: #fff;
+  color: #0f2744;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.03em;
+}
+
+.group-filter button.selected {
+  background: #0f2744;
+  color: #fff;
+  border-color: #0f2744;
+}
+
 .page-controls {
   display: flex;
   flex-wrap: wrap;
@@ -963,6 +987,7 @@ button.stats-net.selected {
 }
 
 @media (max-width: 900px) {
+  .group-filter { grid-template-columns: 1fr; }
   .workspace, .users { grid-template-columns: minmax(0, 1fr); }
   .topbar { align-items: flex-start; flex-direction: column; }
   .stats-head { align-items: flex-start; flex-direction: column; }

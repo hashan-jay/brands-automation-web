@@ -25,7 +25,7 @@ class BrandListView(APIView):
 
     def get(self, request):
         brands = Brand.objects.filter(is_active=True).order_by("sort_order", "name")
-        return Response([{"id": brand.id, "name": brand.name} for brand in brands])
+        return Response([{"id": brand.id, "name": brand.name, "group": brand.group} for brand in brands])
 
 
 class DashboardView(APIView):
@@ -35,6 +35,7 @@ class DashboardView(APIView):
         day = _parse_day(request.query_params.get("date"))
         note_watch(day)
         start_poller()
+        group_name = str(request.query_params.get("group") or "All")
         brand_name = str(request.query_params.get("brand") or "All")
         wanted_type = str(request.query_params.get("type") or "All types")
         wanted_status = str(request.query_params.get("status") or "All statuses")
@@ -43,7 +44,9 @@ class DashboardView(APIView):
             current = livecache.revision(day)
             if current is not None and current == client_rev:
                 return _live_response({"unchanged": True, "revision": int(current)})
-        return _live_response(_dashboard_body(day, brand_name, wanted_type, wanted_status, load_dashboard(day)))
+        return _live_response(
+            _dashboard_body(day, brand_name, wanted_type, wanted_status, load_dashboard(day), group_name)
+        )
 
 
 class BankAccountsView(APIView):
@@ -61,11 +64,13 @@ class BankLedgerView(APIView):
 
     def get(self, request):
         day = _parse_day(request.query_params.get("date"))
+        group_name = str(request.query_params.get("group") or "All")
         brand_name = str(request.query_params.get("brand") or "All")
-        return _live_response(bank_ledger(day, brand_name))
+        return _live_response(bank_ledger(day, brand_name, group_name))
 
     def post(self, request):
         day = _parse_day(request.data.get("date"))
+        group_name = str(request.data.get("group") or "All")
         brand_name = str(request.data.get("brand") or "All")
         bank_name = str(request.data.get("bank_name") or "")
         account_name = str(request.data.get("account_name") or "")
@@ -82,6 +87,7 @@ class BankLedgerView(APIView):
                 limit=limit,
                 set_limit=set_limit,
                 brand_name=brand_name,
+                group_name=group_name,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
@@ -95,13 +101,14 @@ class BankLedgerDayView(APIView):
 
     def get(self, request):
         day = _parse_day(request.query_params.get("date"))
+        group_name = str(request.query_params.get("group") or "All")
         brand_name = str(request.query_params.get("brand") or "All")
         bank_name = str(request.query_params.get("bank_name") or "")
         account_name = str(request.query_params.get("account_name") or "")
         if not bank_name.strip() or not account_name.strip():
             return Response({"detail": "Choose a bank account."}, status=400)
         try:
-            payload = bank_ledger_day(day, bank_name, account_name, brand_name)
+            payload = bank_ledger_day(day, bank_name, account_name, brand_name, group_name)
         except LookupError as exc:
             return Response({"detail": str(exc)}, status=404)
         return _live_response(payload)
@@ -168,9 +175,27 @@ def _live_response(body: dict) -> Response:
     return response
 
 
-def _dashboard_body(day, brand_name: str, wanted_type: str, wanted_status: str, packed: dict) -> dict:
+def _dashboard_body(
+    day,
+    brand_name: str,
+    wanted_type: str,
+    wanted_status: str,
+    packed: dict,
+    group_name: str = "All",
+) -> dict:
     rows = packed.get("rows") or []
     brands_meta = packed.get("brands") or []
+    group_name = (group_name or "All").strip() or "All"
+    if group_name != "All":
+        known = {choice for choice, _label in Brand.GROUPS}
+        if group_name in known:
+            allowed = set(Brand.objects.filter(is_active=True, group=group_name).values_list("name", flat=True))
+        else:
+            allowed = set()
+        if brand_name != "All" and brand_name not in allowed:
+            allowed = set()
+        rows = [row for row in rows if row.get("brand") in allowed]
+        brands_meta = [item for item in brands_meta if item.get("name") in allowed]
     if brand_name != "All":
         scoped = [row for row in rows if row.get("brand") == brand_name]
         meta = [item for item in brands_meta if item.get("name") == brand_name]
