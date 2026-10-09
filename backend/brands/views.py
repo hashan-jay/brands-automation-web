@@ -61,10 +61,12 @@ class BankLedgerView(APIView):
 
     def get(self, request):
         day = _parse_day(request.query_params.get("date"))
-        return _live_response(bank_ledger(day))
+        brand_name = str(request.query_params.get("brand") or "All")
+        return _live_response(bank_ledger(day, brand_name))
 
     def post(self, request):
         day = _parse_day(request.data.get("date"))
+        brand_name = str(request.data.get("brand") or "All")
         bank_name = str(request.data.get("bank_name") or "")
         account_name = str(request.data.get("account_name") or "")
         fields = request.data if isinstance(request.data, dict) else {}
@@ -79,6 +81,7 @@ class BankLedgerView(APIView):
                 status=status,
                 limit=limit,
                 set_limit=set_limit,
+                brand_name=brand_name,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
@@ -92,12 +95,13 @@ class BankLedgerDayView(APIView):
 
     def get(self, request):
         day = _parse_day(request.query_params.get("date"))
+        brand_name = str(request.query_params.get("brand") or "All")
         bank_name = str(request.query_params.get("bank_name") or "")
         account_name = str(request.query_params.get("account_name") or "")
         if not bank_name.strip() or not account_name.strip():
             return Response({"detail": "Choose a bank account."}, status=400)
         try:
-            payload = bank_ledger_day(day, bank_name, account_name)
+            payload = bank_ledger_day(day, bank_name, account_name, brand_name)
         except LookupError as exc:
             return Response({"detail": str(exc)}, status=404)
         return _live_response(payload)

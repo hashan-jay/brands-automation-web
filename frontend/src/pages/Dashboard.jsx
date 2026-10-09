@@ -172,27 +172,29 @@ export default function Dashboard() {
 
   return (
     <>
-    <BankLedger date={date} revision={data?.revision || ""} />
+    <div className="page-controls">
+      <label>
+        Brand
+        <select value={brand} onChange={(event) => setBrand(event.target.value)}>
+          <option>All</option>
+          {brands.map((item) => (
+            <option key={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+      <DateField value={date} onChange={setDate} />
+      <button type="button" className={live ? "live on" : "live off"} onClick={() => setLive((value) => !value)}>
+        {live ? "Live: ON" : "Live: OFF"}
+      </button>
+      <button type="button" className="primary" onClick={refreshNow} disabled={refreshing}>
+        {refreshing ? "Refreshing…" : "Refresh now"}
+      </button>
+      <p className="status">{statusText(live, refreshing, data)}</p>
+      {error && <p className="form-error">{error}</p>}
+    </div>
+    <BankLedger date={date} brand={brand} revision={data?.revision || ""} />
     <div className="workspace">
       <aside className="side">
-        <label>
-          Brand
-          <select value={brand} onChange={(event) => setBrand(event.target.value)}>
-            <option>All</option>
-            {brands.map((item) => (
-              <option key={item.id}>{item.name}</option>
-            ))}
-          </select>
-        </label>
-        <DateField value={date} onChange={setDate} />
-        <button type="button" className={live ? "live on" : "live off"} onClick={() => setLive((value) => !value)}>
-          {live ? "Live: ON" : "Live: OFF"}
-        </button>
-        <button type="button" className="primary" onClick={refreshNow} disabled={refreshing}>
-          {refreshing ? "Refreshing…" : "Refresh now"}
-        </button>
-        <p className="status">{statusText(live, refreshing, data)}</p>
-        {error && <p className="form-error">{error}</p>}
         <BankAccounts date={date} brands={brands} revision={data?.revision || ""} />
       </aside>
 
@@ -483,7 +485,7 @@ const LEDGER_CARDS = [
   ["cash_out", "Cash out", "money"],
 ];
 
-function BankLedger({ date, revision }) {
+function BankLedger({ date, brand, revision }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -519,7 +521,8 @@ function BankLedger({ date, revision }) {
     const id = ++request.current;
     let stopped = false;
     setLoading(true);
-    api(`/api/bank-ledger/?date=${encodeURIComponent(date)}`)
+    const params = new URLSearchParams({ date, brand });
+    api(`/api/bank-ledger/?${params.toString()}`)
       .then((next) => {
         if (stopped || id !== request.current) return;
         setRows(next?.rows || []);
@@ -534,7 +537,7 @@ function BankLedger({ date, revision }) {
     return () => {
       stopped = true;
     };
-  }, [date, revision]);
+  }, [date, brand, revision]);
 
   function replaceRow(row) {
     setRows((current) =>
@@ -547,7 +550,7 @@ function BankLedger({ date, revision }) {
   async function save(row, body) {
     const next = await api("/api/bank-ledger/", {
       method: "POST",
-      body: { date, bank_name: row.bank_name, account_name: row.account_name, ...body },
+      body: { date, brand, bank_name: row.bank_name, account_name: row.account_name, ...body },
     });
     if (next?.row) replaceRow(next.row);
   }
@@ -591,8 +594,8 @@ function BankLedger({ date, revision }) {
       <div className="ledger-intro">
         <h2>Bank balances</h2>
         <p>
-          All brands · {formatDay(date)}. Opening balance is the previous day at 11:59 PM. Closing balance is that
-          opening balance plus this day’s deposits and withdrawals.
+          {brand === "All" ? "All brands" : brand} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
+          Closing balance is that opening balance plus this day’s deposits and withdrawals.
         </p>
       </div>
       {error && <p className="form-error">{error}</p>}
@@ -732,6 +735,7 @@ function BankLedger({ date, revision }) {
         <BankDayDialog
           key={`${opened.bank_name}\u0000${opened.account_name}`}
           account={opened}
+          brand={brand}
           revision={revision}
           onClose={() => setOpened(null)}
         />
@@ -740,7 +744,7 @@ function BankLedger({ date, revision }) {
   );
 }
 
-function BankDayDialog({ account, revision, onClose }) {
+function BankDayDialog({ account, brand, revision, onClose }) {
   const [day, setDay] = useState(today);
   const [state, setState] = useState({ status: "loading", body: null, error: "" });
   const requestId = useRef(0);
@@ -763,6 +767,7 @@ function BankDayDialog({ account, revision, onClose }) {
     }));
     const params = new URLSearchParams({
       date: day,
+      brand,
       bank_name: account.bank_name,
       account_name: account.account_name,
     });
@@ -781,7 +786,7 @@ function BankDayDialog({ account, revision, onClose }) {
     return () => {
       stopped = true;
     };
-  }, [account, day, revision]);
+  }, [account, brand, day, revision]);
 
   const row = state.body?.row;
   const transactions = state.body?.transactions || [];
@@ -799,7 +804,7 @@ function BankDayDialog({ account, revision, onClose }) {
             <h2 id="bank-day-title">
               {account.bank_name} · {account.account_name}
             </h2>
-            <p>All brands · {formatDay(day)}</p>
+            <p>{brand === "All" ? "All brands" : brand} · {formatDay(day)}</p>
           </div>
           <div className="bank-day-tools">
             <DateField value={day} onChange={setDay} />

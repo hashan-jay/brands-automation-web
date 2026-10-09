@@ -577,16 +577,20 @@ _LEDGER_ZERO_COLUMNS = {
 }
 
 
-def bank_ledger(day: date) -> dict:
-    """Every bank account used by any brand, with that date's balances.
+def bank_ledger(day: date, brand_name: str = "All") -> dict:
+    """Bank accounts for the selected brand, or every brand when the name is All.
 
     Opening balance is everything settled before this Sydney day, which is the
     previous day's balance at 11:59 PM. Closing balance is the opening balance
     plus this day's completed deposits and withdrawals. The next day's opening
-    balance is therefore this closing balance. Transfer, pending, complete, and
+    balance is therefore this closing balance. A chosen brand counts only that
+    brand's completed deposits and withdrawals. Transfer, pending, complete, and
     cash columns are fixed at 0.00 and are not part of either balance.
     """
-    return {"date": day.isoformat(), "rows": _ledger_rows(day)}
+    brand, missing = _ledger_brand(brand_name)
+    if missing:
+        return {"date": day.isoformat(), "rows": []}
+    return {"date": day.isoformat(), "rows": _ledger_rows(day, brand)}
 
 
 def update_bank_ledger(
@@ -597,9 +601,13 @@ def update_bank_ledger(
     status: str | None = None,
     limit: Decimal | None = None,
     set_limit: bool = False,
+    brand_name: str = "All",
 ) -> dict:
     bank_name = bank_name.strip()
     account_name = account_name.strip()
+    brand, missing = _ledger_brand(brand_name)
+    if missing:
+        raise LookupError("That brand was not found.")
     if status is not None and status not in LEDGER_STATUSES:
         raise ValueError("Choose a status from the list.")
     if not _ledger_account_exists(bank_name, account_name):
@@ -618,7 +626,11 @@ def update_bank_ledger(
     if changed:
         setting.save(update_fields=changed)
     row = next(
-        (item for item in _ledger_rows(day) if item["bank_name"] == bank_name and item["account_name"] == account_name),
+        (
+            item
+            for item in _ledger_rows(day, brand)
+            if item["bank_name"] == bank_name and item["account_name"] == account_name
+        ),
         None,
     )
     if row is None:
@@ -626,16 +638,30 @@ def update_bank_ledger(
     return row
 
 
-def _ledger_account_exists(bank_name: str, account_name: str) -> bool:
-    return Transaction.objects.filter(
+def _ledger_brand(brand_name: str) -> tuple[Brand | None, bool]:
+    """None means every brand. The second value is true when the name is unknown."""
+    name = (brand_name or "All").strip() or "All"
+    if name == "All":
+        return None, False
+    brand = Brand.objects.filter(is_active=True, name=name).first()
+    if brand is None:
+        return None, True
+    return brand, False
+
+
+def _ledger_account_exists(bank_name: str, account_name: str, brand: Brand | None = None) -> bool:
+    rows = Transaction.objects.filter(
         status="COMPLETED",
         type__in=("DEPOSIT", "WITHDRAW"),
         bank_name=bank_name,
         bank_account_name=account_name,
-    ).exists()
+    )
+    if brand is not None:
+        rows = rows.filter(brand=brand)
+    return rows.exists()
 
 
-def _ledger_rows(day: date) -> list[dict]:
+def _ledger_rows(day: date, brand: Brand | None = None) -> list[dict]:
     start, end = _sydney_bounds(day)
     zero = Decimal("0.00")
     base = (
@@ -645,6 +671,8 @@ def _ledger_rows(day: date) -> list[dict]:
         .annotate(settled_at=Coalesce("processed_at", "created_at"))
         .filter(settled_at__lt=end)
     )
+    if brand is not None:
+        base = base.filter(brand=brand)
     prior = _ledger_groups(base.filter(settled_at__lt=start))
     current = _ledger_groups(base.filter(settled_at__gte=start))
     settings = {
@@ -695,19 +723,23 @@ def _ledger_groups(queryset) -> dict[tuple[str, str], dict]:
     }
 
 
-def bank_ledger_day(day: date, bank_name: str, account_name: str) -> dict:
+def bank_ledger_day(day: date, bank_name: str, account_name: str, brand_name: str = "All") -> dict:
     """One bank account for one Sydney day: the sheet figures and that day's transactions.
 
     The figures use the same opening, closing, deposit, and withdrawal rules as the
     balance sheet. Transactions are the completed deposits and withdrawals that
-    settled on that day for this bank and account name.
+    settled on that day for this bank and account name. A chosen brand counts only
+    that brand.
     """
     bank_name = bank_name.strip()
     account_name = account_name.strip()
-    if not _ledger_account_exists(bank_name, account_name):
+    brand, missing = _ledger_brand(brand_name)
+    if missing:
+        raise LookupError("That brand was not found.")
+    if not _ledger_account_exists(bank_name, account_name, brand):
         raise LookupError("That bank account was not found.")
     start, end = _sydney_bounds(day)
-    base = _ledger_account_queryset(bank_name, account_name)
+    base = _ledger_account_queryset(bank_name, account_name, brand)
     prior = _ledger_totals(base.filter(settled_at__lt=start))
     current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
     row = _ledger_account_payload(bank_name, account_name, prior, current)
@@ -725,16 +757,16 @@ def bank_ledger_day(day: date, bank_name: str, account_name: str) -> dict:
     return {"date": day.isoformat(), "row": row, "transactions": transactions}
 
 
-def _ledger_account_queryset(bank_name: str, account_name: str):
-    return (
-        Transaction.objects.filter(
-            status="COMPLETED",
-            type__in=("DEPOSIT", "WITHDRAW"),
-            bank_name=bank_name,
-            bank_account_name=account_name,
-        )
-        .annotate(settled_at=Coalesce("processed_at", "created_at"))
+def _ledger_account_queryset(bank_name: str, account_name: str, brand: Brand | None = None):
+    rows = Transaction.objects.filter(
+        status="COMPLETED",
+        type__in=("DEPOSIT", "WITHDRAW"),
+        bank_name=bank_name,
+        bank_account_name=account_name,
     )
+    if brand is not None:
+        rows = rows.filter(brand=brand)
+    return rows.annotate(settled_at=Coalesce("processed_at", "created_at"))
 
 
 def _ledger_totals(queryset) -> dict:

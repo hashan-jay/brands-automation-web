@@ -98,6 +98,37 @@ button {
 
 .app { min-height: 100vh; }
 
+.page-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 12px 12px 0;
+  padding: 14px;
+  background: #fff;
+  border-radius: 12px;
+}
+
+.page-controls label,
+.page-controls .date-field {
+  flex: 0 1 240px;
+  min-width: 180px;
+}
+
+.page-controls .live,
+.page-controls .primary {
+  width: auto;
+  min-width: 140px;
+  height: 40px;
+}
+
+.page-controls .status {
+  margin: 0 0 8px;
+  flex: 1 1 220px;
+}
+
+.page-controls .form-error { flex: 1 1 100%; }
+
 .workspace {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
