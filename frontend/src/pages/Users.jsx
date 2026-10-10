@@ -1,6 +1,26 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 3l18 18" />
+      <path d="M10.6 10.6a3 3 0 0 0 4.2 4.2" />
+      <path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.5 18.5 0 0 1-4.1 4.8" />
+      <path d="M6.1 6.1C3.6 7.8 2 12 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8" />
+    </svg>
+  );
+}
+
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [username, setUsername] = useState("");
@@ -102,8 +122,13 @@ export default function Users() {
                 autoComplete="new-password"
                 placeholder="At least 8 characters"
               />
-              <button type="button" className="text-button" onClick={() => setShowPassword((value) => !value)}>
-                {showPassword ? "Hide" : "Show"}
+              <button
+                type="button"
+                className="password-toggle"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((value) => !value)}
+              >
+                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </span>
           </label>

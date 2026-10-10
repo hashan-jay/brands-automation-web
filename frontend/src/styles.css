@@ -1020,14 +1020,27 @@ body.modal-open {
   display: block;
 }
 
-.password-field input { width: 100%; padding-right: 64px; }
+.password-field input { width: 100%; padding-right: 44px; }
 
-.password-field .text-button {
+.password-toggle {
   position: absolute;
   top: 50%;
-  right: 12px;
+  right: 6px;
   transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5c6b7c;
 }
+
+.password-toggle:hover { background: #f1f5f9; color: #0f2744; }
+
+.password-toggle svg { width: 18px; height: 18px; display: block; }
 
 .users-create .switch-row {
   flex-direction: row;
