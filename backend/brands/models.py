@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db import models
 
 SYDNEY = ZoneInfo("Australia/Sydney")
@@ -135,6 +136,41 @@ class BankLedgerSetting(models.Model):
 
     def __str__(self) -> str:
         return f"{self.bank_name} · {self.account_name}"
+
+
+class BankTransfer(models.Model):
+    """Money moved by hand from one bank account to another.
+
+    transfer_date is the day the finance team moved the money in the bank apps.
+    created_on is the Sydney day this row was entered here. Balances follow
+    transfer_date, not the day the row was typed in.
+    """
+
+    transfer_date = models.DateField(db_index=True)
+    created_on = models.DateField(db_index=True)
+    from_bank_name = models.CharField(max_length=128)
+    from_account_name = models.CharField(max_length=255)
+    to_bank_name = models.CharField(max_length=128)
+    to_account_name = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="bank_transfers",
+    )
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["from_bank_name", "from_account_name", "transfer_date"], name="bank_xfer_from_day"),
+            models.Index(fields=["to_bank_name", "to_account_name", "transfer_date"], name="bank_xfer_to_day"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.transfer_date} {self.from_bank_name} → {self.to_bank_name} {self.amount}"
 
 
 def sydney_today():

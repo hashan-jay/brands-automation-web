@@ -4,6 +4,8 @@ from brands.views import (
     BankAccountsView,
     BankLedgerDayView,
     BankLedgerView,
+    BankTransferAccountView,
+    BankTransferListView,
     BrandListView,
     DashboardView,
     SyncView,
@@ -16,6 +18,8 @@ urlpatterns = [
     path("bank-accounts/", BankAccountsView.as_view()),
     path("bank-ledger/", BankLedgerView.as_view()),
     path("bank-ledger/day/", BankLedgerDayView.as_view()),
+    path("bank-transfers/", BankTransferListView.as_view()),
+    path("bank-transfers/accounts/", BankTransferAccountView.as_view()),
     path("transactions/detail/", TransactionDetailView.as_view()),
     path("sync/", SyncView.as_view()),
 ]

@@ -57,7 +57,7 @@ const WIDGETS = [
   ["rejected", "Rejected", "rejected", "REJECTED", "All types"],
 ];
 
-function today() {
+export function today() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Australia/Sydney",
     year: "numeric",
@@ -450,7 +450,7 @@ function popupCanScroll(event) {
   return false;
 }
 
-function lockPageScroll() {
+export function lockPageScroll() {
   openModals += 1;
   const body = document.body;
   const root = document.documentElement;
@@ -641,10 +641,17 @@ function BankLedger({ date, group, brand, revision }) {
   const totalScroll = useRef(null);
   const [columnWidths, setColumnWidths] = useState([]);
   const [statusFilter, setStatusFilter] = useState("All");
+  const [bankQuery, setBankQuery] = useState("");
   const visibleRows = useMemo(() => {
-    if (statusFilter === "All") return rows;
-    return rows.filter((row) => row.status === statusFilter);
-  }, [rows, statusFilter]);
+    const query = bankQuery.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (statusFilter !== "All" && row.status !== statusFilter) return false;
+      if (!query) return true;
+      const bank = String(row.bank_name || "").toLowerCase();
+      const account = String(row.account_name || "").toLowerCase();
+      return bank.includes(query) || account.includes(query);
+    });
+  }, [rows, statusFilter, bankQuery]);
   const totals = useMemo(() => ledgerTotals(visibleRows), [visibleRows]);
   const orderedRows = useMemo(() => {
     const active = [];
@@ -741,19 +748,30 @@ function BankLedger({ date, group, brand, revision }) {
           <h2>Bank balances</h2>
           <p>
             {scopeLabel(group, brand)} · {formatDay(date)}. Opening balance is the previous day at 11:59 PM.
-            Closing balance is that opening balance plus this day’s deposits and withdrawals.
+            Closing balance is that opening balance plus this day’s deposits, withdrawals, and bank transfers.
           </p>
         </div>
-        <label className="ledger-filter">
-          Status
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            {BANK_STATUS_FILTERS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="ledger-tools">
+          <label className="ledger-filter ledger-search">
+            Bank
+            <input
+              type="search"
+              value={bankQuery}
+              onChange={(event) => setBankQuery(event.target.value)}
+              placeholder="Search bank or account"
+            />
+          </label>
+          <label className="ledger-filter">
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              {BANK_STATUS_FILTERS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
       {error && <p className="form-error">{error}</p>}
       <div className="ledger-wrap" ref={tableScroll} onScroll={syncTotalScroll}>
@@ -794,7 +812,7 @@ function BankLedger({ date, group, brand, revision }) {
             {!loading && rows.length > 0 && orderedRows.length === 0 && (
               <tr>
                 <td className="ledger-empty" colSpan={14}>
-                  No bank accounts for this status.
+                  {bankQuery.trim() ? "No bank accounts match this search." : "No bank accounts for this status."}
                 </td>
               </tr>
             )}
@@ -1258,7 +1276,7 @@ function stamp(value) {
   return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
 }
 
-function DateField({ value, onChange }) {
+export function DateField({ value, onChange, label = "Date" }) {
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(() => value.slice(0, 7));
   const root = useRef(null);
@@ -1290,7 +1308,7 @@ function DateField({ value, onChange }) {
 
   return (
     <div className="date-field" ref={root}>
-      <span className="date-label">Date</span>
+      <span className="date-label">{label}</span>
       <button type="button" className="date-button" onClick={toggle} aria-expanded={open}>
         {formatDay(value)}
       </button>
@@ -1349,7 +1367,7 @@ function Calendar({ month, selected, onMonth, onPick }) {
   );
 }
 
-function formatDay(value) {
+export function formatDay(value) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return value;
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));

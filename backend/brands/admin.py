@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from brands.models import Brand, BrandSync, Transaction
+from brands.models import BankTransfer, Brand, BrandSync, Transaction
 
 
 @admin.register(Brand)
@@ -16,7 +16,19 @@ class TransactionAdmin(admin.ModelAdmin):
     search_fields = ("external_id", "username", "player_name")
 
 
-@admin.register(BrandSync)
+@admin.register(BankTransfer)
+class BankTransferAdmin(admin.ModelAdmin):
+    list_display = (
+        "transfer_date",
+        "created_on",
+        "from_bank_name",
+        "from_account_name",
+        "to_bank_name",
+        "to_account_name",
+        "amount",
+    )
+    list_filter = ("transfer_date", "created_on")
+    search_fields = ("from_bank_name", "from_account_name", "to_bank_name", "to_account_name")
 class BrandSyncAdmin(admin.ModelAdmin):
     list_display = ("brand", "day", "row_count", "updated_at", "message")
     list_filter = ("day", "brand")

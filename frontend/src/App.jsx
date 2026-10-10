@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
+import BankTransfers from "./pages/BankTransfers";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
@@ -40,11 +41,21 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div>
-          <h1>Brands Automation</h1>
-          <p>Live deposits and withdrawals from each brand API.</p>
+        <div className="brand-lockup">
+          <button type="button" className="brand-home" onClick={() => setPage("dashboard")}>
+            <h1>Brands Automation</h1>
+            <p>Live deposits and withdrawals from each brand API.</p>
+          </button>
         </div>
         <div className="top-actions">
+          <button
+            type="button"
+            className={`ghost${page === "transfers" ? " selected" : ""}`}
+            aria-pressed={page === "transfers"}
+            onClick={() => setPage(page === "transfers" ? "dashboard" : "transfers")}
+          >
+            Bank Transfers
+          </button>
           {user.is_staff && (
             <button type="button" className={`ghost${page === "users" ? " selected" : ""}`} onClick={() => setPage(page === "users" ? "dashboard" : "users")}>
               {page === "users" ? "Transactions" : "Users"}
@@ -59,7 +70,7 @@ export default function App() {
           </button>
         </div>
       </header>
-      {page === "users" && user.is_staff ? <Users /> : <Dashboard />}
+      {page === "users" && user.is_staff ? <Users /> : page === "transfers" ? <BankTransfers /> : <Dashboard />}
     </div>
   );
 }

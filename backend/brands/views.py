@@ -13,6 +13,9 @@ from brands.services import (
     bank_accounts,
     bank_ledger,
     bank_ledger_day,
+    bank_transfer_accounts,
+    create_bank_transfer,
+    list_bank_transfers,
     load_dashboard,
     sync_day,
     transaction_record,
@@ -114,6 +117,43 @@ class BankLedgerDayView(APIView):
         return _live_response(payload)
 
 
+class BankTransferListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        day = _parse_day(request.query_params.get("date"))
+        return _live_response(list_bank_transfers(day))
+
+    def post(self, request):
+        fields = request.data if isinstance(request.data, dict) else {}
+        day = _parse_transfer_day(fields.get("date"))
+        if day is None:
+            return Response({"detail": "Choose the date the transfer was done."}, status=400)
+        try:
+            amount = _parse_transfer_amount(fields.get("amount"))
+            row = create_bank_transfer(
+                day,
+                str(fields.get("from_bank_name") or ""),
+                str(fields.get("from_account_name") or ""),
+                str(fields.get("to_bank_name") or ""),
+                str(fields.get("to_account_name") or ""),
+                amount,
+                request.user,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        except LookupError as exc:
+            return Response({"detail": str(exc)}, status=404)
+        return _live_response({"row": row})
+
+
+class BankTransferAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return _live_response({"accounts": bank_transfer_accounts()})
+
+
 class TransactionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -167,6 +207,27 @@ def _parse_day(value: object):
         except ValueError:
             pass
     return sydney_today()
+
+
+def _parse_transfer_day(value: object):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _parse_transfer_amount(value: object) -> Decimal:
+    text = str(value or "").strip().replace(",", "")
+    if not text:
+        raise ValueError("Enter the amount.")
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        raise ValueError("Enter the amount in dollars and cents.")
+    return amount
 
 
 def _live_response(body: dict) -> Response:

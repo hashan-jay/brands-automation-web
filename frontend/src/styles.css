@@ -83,9 +83,57 @@ button {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.topbar h1, .topbar p { color: #fff; }
-.topbar h1 { font-size: 20px; letter-spacing: -0.03em; }
-.topbar p { margin: 3px 0 0; color: #c5d4e8; font-size: 13px; }
+.brand-home {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.brand-home h1, .brand-home p { color: #fff; }
+.brand-home h1 { margin: 0; font-size: 20px; letter-spacing: -0.03em; }
+.brand-home p { margin: 3px 0 0; color: #c5d4e8; font-size: 13px; }
+
+.transfers-panel {
+  padding: 24px;
+  gap: 18px;
+}
+
+.transfers-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.transfers-count {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.transfers-count strong { color: var(--ink); }
+
+.transfers-table { max-height: calc(100vh - 280px); }
+
+.transfer-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+
+.modal.transfer-dialog {
+  overflow: visible;
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal.transfer-dialog .date-button { width: 100%; }
 
 .top-actions, .filters, .toolbar {
   display: flex;
@@ -1197,10 +1245,20 @@ body.modal-open {
   padding: 12px 14px 8px;
 }
 
+.ledger-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 0 1 auto;
+}
+
 .ledger-filter {
   flex: 0 0 200px;
   min-width: 180px;
 }
+
+.ledger-search { flex-basis: 260px; }
 
 .ledger-intro h2 {
   margin: 0;

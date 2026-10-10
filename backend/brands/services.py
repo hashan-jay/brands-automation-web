@@ -18,7 +18,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from brands import livecache
-from brands.models import SYDNEY, BankLedgerSetting, Brand, BrandSync, CompanyBank, Transaction, _clock
+from brands.models import SYDNEY, BankLedgerSetting, BankTransfer, Brand, BrandSync, CompanyBank, Transaction, _clock, sydney_today
 
 UTC = ZoneInfo("UTC")
 
@@ -675,11 +675,12 @@ def bank_ledger(day: date, brand_name: str = "All", group_name: str = "All") -> 
     """Bank accounts for the selected group and brand.
 
     Opening balance is everything settled before this Sydney day, which is the
-    previous day's balance at 11:59 PM. Closing balance is the opening balance
-    plus this day's completed deposits and withdrawals. The next day's opening
-    balance is therefore this closing balance. A chosen group or brand counts
-    only those completed deposits and withdrawals. Transfer, pending, complete,
-    and cash columns are fixed at 0.00 and are not part of either balance.
+    previous day's balance at 11:59 PM. That includes completed deposits,
+    withdrawals, and manual bank transfers dated before this day. Closing
+    balance is the opening balance plus this day's deposits, withdrawals, and
+    transfers. The next day's opening balance is therefore this closing
+    balance. A chosen group or brand counts only those completed deposits and
+    withdrawals. Pending, complete, and cash columns stay at 0.00.
     """
     brand, grouped, missing = _ledger_scope(group_name, brand_name)
     if missing:
@@ -809,12 +810,13 @@ def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | N
         for item in BankLedgerSetting.objects.all()
     }
     active_keys = _active_bank_keys(brand, grouped)
+    moves = _transfer_maps(day)
+    keys = set(prior) | set(current) | _transfer_keys_for_scope(day, brand, grouped, set(prior) | set(current))
     rows = []
-    for key in set(prior) | set(current):
+    for key in keys:
         bank_name, account_name = key
         before = prior.get(key)
         today = current.get(key)
-        opening = (before["deposits"] + before["withdrawals"]) if before else zero
         deposits = today["deposits"] if today else zero
         withdrawals = today["withdrawals"] if today else zero
         deposit_count = (before["deposit_count"] if before else 0) + (today["deposit_count"] if today else 0)
@@ -822,6 +824,9 @@ def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | N
         setting = settings.get(key)
         chosen = setting.status if setting and setting.status in LEDGER_STATUSES else ""
         limit_amount = setting.limit_amount if setting else None
+        transfer = _moves_for(moves, key)
+        txn_opening = (before["deposits"] + before["withdrawals"]) if before else zero
+        opening = txn_opening + transfer["prior_in"] - transfer["prior_out"]
         rows.append(
             {
                 "bank_name": bank_name,
@@ -829,11 +834,13 @@ def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | N
                 "activity": "Active" if _bank_key(bank_name, account_name) in active_keys else "Inactive",
                 "status": chosen or _ledger_status(deposit_count, withdraw_count),
                 "opening": _money_text(opening),
-                "closing": _money_text(opening + deposits + withdrawals),
+                "closing": _money_text(opening + deposits + withdrawals + transfer["day_in"] - transfer["day_out"]),
                 "limit": _money_text(limit_amount) if limit_amount is not None else None,
                 "deposit": _money_text(deposits),
                 "withdraw": _money_text(withdrawals),
                 **_LEDGER_ZERO_COLUMNS,
+                "transfer_in": _money_text(transfer["day_in"]),
+                "transfer_out": _money_text(-transfer["day_out"] if transfer["day_out"] else zero),
             }
         )
     rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold()))
@@ -863,10 +870,10 @@ def bank_ledger_day(
 ) -> dict:
     """One bank account for one Sydney day: the sheet figures and that day's transactions.
 
-    The figures use the same opening, closing, deposit, and withdrawal rules as the
-    balance sheet. Transactions are the completed deposits and withdrawals that
-    settled on that day for this bank and account name. A chosen brand counts only
-    that brand.
+    The figures use the same opening, closing, deposit, withdrawal, and transfer
+    rules as the balance sheet. Transactions are the completed deposits and
+    withdrawals that settled on that day for this bank and account name. A
+    chosen brand counts only that brand.
     """
     bank_name = bank_name.strip()
     account_name = account_name.strip()
@@ -879,7 +886,7 @@ def bank_ledger_day(
     base = _ledger_account_queryset(bank_name, account_name, brand, grouped)
     prior = _ledger_totals(base.filter(settled_at__lt=start))
     current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
-    row = _ledger_account_payload(bank_name, account_name, prior, current)
+    row = _ledger_account_payload(bank_name, account_name, prior, current, _account_moves(bank_name, account_name, day))
     row["activity"] = (
         "Active" if _bank_key(bank_name, account_name) in _active_bank_keys(brand, grouped) else "Inactive"
     )
@@ -926,11 +933,15 @@ def _ledger_totals(queryset) -> dict:
     )
 
 
-def _ledger_account_payload(bank_name: str, account_name: str, prior: dict, current: dict) -> dict:
+def _ledger_account_payload(bank_name: str, account_name: str, prior: dict, current: dict, moves: dict | None = None) -> dict:
     zero = Decimal("0.00")
-    opening = (prior["deposits"] or zero) + (prior["withdrawals"] or zero)
+    moves = moves or {"prior_in": zero, "prior_out": zero, "day_in": zero, "day_out": zero}
+    txn_opening = (prior["deposits"] or zero) + (prior["withdrawals"] or zero)
+    opening = txn_opening + (moves["prior_in"] or zero) - (moves["prior_out"] or zero)
     deposits = current["deposits"] or zero
     withdrawals = current["withdrawals"] or zero
+    day_in = moves["day_in"] or zero
+    day_out = moves["day_out"] or zero
     deposit_count = int(prior["deposit_count"] or 0) + int(current["deposit_count"] or 0)
     withdraw_count = int(prior["withdraw_count"] or 0) + int(current["withdraw_count"] or 0)
     setting = BankLedgerSetting.objects.filter(bank_name=bank_name, account_name=account_name).first()
@@ -941,11 +952,13 @@ def _ledger_account_payload(bank_name: str, account_name: str, prior: dict, curr
         "account_name": account_name,
         "status": chosen or _ledger_status(deposit_count, withdraw_count),
         "opening": _money_text(opening),
-        "closing": _money_text(opening + deposits + withdrawals),
+        "closing": _money_text(opening + deposits + withdrawals + day_in - day_out),
         "limit": _money_text(limit_amount) if limit_amount is not None else None,
         "deposit": _money_text(deposits),
         "withdraw": _money_text(withdrawals),
         **_LEDGER_ZERO_COLUMNS,
+        "transfer_in": _money_text(day_in),
+        "transfer_out": _money_text(-day_out if day_out else zero),
     }
 
 
@@ -957,6 +970,127 @@ def _ledger_status(deposit_count: int, withdraw_count: int) -> str:
     if withdraw_count:
         return "Withdraw only"
     return "Inactive"
+
+
+def _sum_transfer_side(queryset, bank_field: str, account_field: str) -> dict[tuple[str, str], Decimal]:
+    zero = Decimal("0.00")
+    grouped = queryset.values(bank_field, account_field).annotate(
+        total=Coalesce(Sum("amount"), zero, output_field=_MONEY_FIELD),
+    )
+    return {
+        (row[bank_field], row[account_field]): row["total"] or zero
+        for row in grouped
+    }
+
+
+def _transfer_maps(day: date) -> dict[str, dict[tuple[str, str], Decimal]]:
+    """Transfer totals for one Sydney day and for every earlier day."""
+    prior = BankTransfer.objects.filter(transfer_date__lt=day)
+    current = BankTransfer.objects.filter(transfer_date=day)
+    return {
+        "prior_in": _sum_transfer_side(prior, "to_bank_name", "to_account_name"),
+        "prior_out": _sum_transfer_side(prior, "from_bank_name", "from_account_name"),
+        "day_in": _sum_transfer_side(current, "to_bank_name", "to_account_name"),
+        "day_out": _sum_transfer_side(current, "from_bank_name", "from_account_name"),
+    }
+
+
+def _moves_for(moves: dict, key: tuple[str, str]) -> dict[str, Decimal]:
+    zero = Decimal("0.00")
+    return {
+        "prior_in": moves["prior_in"].get(key, zero),
+        "prior_out": moves["prior_out"].get(key, zero),
+        "day_in": moves["day_in"].get(key, zero),
+        "day_out": moves["day_out"].get(key, zero),
+    }
+
+
+def _account_moves(bank_name: str, account_name: str, day: date) -> dict[str, Decimal]:
+    return _moves_for(_transfer_maps(day), (bank_name, account_name))
+
+
+def _transfer_keys_for_scope(day: date, brand: Brand | None, grouped: list[Brand] | None, already: set) -> set[tuple[str, str]]:
+    """Accounts with a transfer on or before this day that the sheet should still list."""
+    keys = set()
+    for item in BankTransfer.objects.filter(transfer_date__lte=day).values(
+        "from_bank_name", "from_account_name", "to_bank_name", "to_account_name"
+    ):
+        keys.add((item["from_bank_name"], item["from_account_name"]))
+        keys.add((item["to_bank_name"], item["to_account_name"]))
+    extra = keys - already
+    if brand is None and grouped is None:
+        return extra
+    return {key for key in extra if _ledger_account_exists(key[0], key[1], brand, grouped)}
+
+
+def bank_transfer_accounts() -> list[dict]:
+    pairs = (
+        Transaction.objects.filter(status="COMPLETED", type__in=("DEPOSIT", "WITHDRAW"))
+        .exclude(bank_name="")
+        .exclude(bank_account_name="")
+        .values_list("bank_name", "bank_account_name")
+        .distinct()
+    )
+    rows = [{"bank_name": bank, "account_name": account} for bank, account in pairs]
+    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold()))
+    return rows
+
+
+def list_bank_transfers(day: date) -> dict:
+    rows = BankTransfer.objects.filter(transfer_date=day).order_by("-created_at", "-id")
+    return {"date": day.isoformat(), "rows": [_transfer_payload(item) for item in rows]}
+
+
+def create_bank_transfer(
+    day: date,
+    from_bank_name: str,
+    from_account_name: str,
+    to_bank_name: str,
+    to_account_name: str,
+    amount: Decimal,
+    created_by=None,
+) -> dict:
+    from_bank_name = from_bank_name.strip()
+    from_account_name = from_account_name.strip()
+    to_bank_name = to_bank_name.strip()
+    to_account_name = to_account_name.strip()
+    if not from_bank_name or not from_account_name or not to_bank_name or not to_account_name:
+        raise ValueError("Choose the bank the money leaves and the bank it arrives in.")
+    if (from_bank_name, from_account_name) == (to_bank_name, to_account_name):
+        raise ValueError("Choose two different bank accounts.")
+    if not _ledger_account_exists(from_bank_name, from_account_name):
+        raise LookupError("The bank sending the money is not in the bank list.")
+    if not _ledger_account_exists(to_bank_name, to_account_name):
+        raise LookupError("The bank receiving the money is not in the bank list.")
+    if amount != amount.quantize(Decimal("0.01")):
+        raise ValueError("Use at most two decimal places.")
+    amount = amount.quantize(Decimal("0.01"))
+    if amount <= 0:
+        raise ValueError("Enter an amount greater than zero.")
+    saved = BankTransfer.objects.create(
+        transfer_date=day,
+        created_on=sydney_today(),
+        from_bank_name=from_bank_name,
+        from_account_name=from_account_name,
+        to_bank_name=to_bank_name,
+        to_account_name=to_account_name,
+        amount=amount,
+        created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
+    )
+    return _transfer_payload(saved)
+
+
+def _transfer_payload(item: BankTransfer) -> dict:
+    return {
+        "id": item.pk,
+        "transfer_date": item.transfer_date.isoformat(),
+        "created_on": item.created_on.isoformat(),
+        "from_bank_name": item.from_bank_name,
+        "from_account_name": item.from_account_name,
+        "to_bank_name": item.to_bank_name,
+        "to_account_name": item.to_account_name,
+        "amount": _money_text(item.amount),
+    }
 
 
 def bank_accounts(day: date, brand_name: str, bank_name: str) -> dict:
