@@ -933,18 +933,18 @@ body.modal-open {
 }
 
 .users-page {
-  padding: 16px;
+  padding: 28px 32px 40px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 22px;
 }
 
 .users-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 16px;
-  padding: 4px 4px 0;
+  gap: 24px;
+  padding: 0 8px;
 }
 
 .users-head h2 {
@@ -995,9 +995,15 @@ body.modal-open {
 
 .users {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  gap: 24px;
   padding: 0;
+}
+
+.users-create,
+.users-list {
+  padding: 28px;
+  gap: 18px;
 }
 
 .users-create p,
@@ -1045,23 +1051,23 @@ body.modal-open {
   font-weight: 600;
 }
 
-.users-list-head { margin-bottom: 4px; }
+.users-list-head { margin: 0 4px 8px; }
 
 .account-list {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
 .account {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 14px;
-  padding: 12px;
+  gap: 28px;
+  padding: 18px 22px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: #fff;
@@ -1107,8 +1113,8 @@ body.modal-open {
 
 .switch-field {
   align-items: center;
-  gap: 6px;
-  margin: 0;
+  gap: 8px;
+  margin: 0 0 0 8px;
   color: #64748b;
   font-size: 11px;
   font-weight: 700;
