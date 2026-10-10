@@ -179,41 +179,62 @@ export default function Dashboard() {
     }
   }
 
+  const viewStatus = friendlyStatus(live, refreshing, data);
+
   return (
     <>
+    <section className="command" aria-label="Filters">
+    <div className="command-head">
+      <div>
+        <h2>What to show</h2>
+        <p>Choose a group first. Brand, date, and live updates apply to bank balances and transactions together.</p>
+      </div>
+      <p className="command-scope">{scopeLabel(group, brand)} · {formatDay(date)}</p>
+    </div>
     <div className="group-filter" role="group" aria-label="Group">
-      {GROUPS.map(([value, label]) => (
-        <button
-          key={value}
-          type="button"
-          className={group === value ? "selected" : ""}
-          aria-pressed={group === value}
-          onClick={() => chooseGroup(value)}
-        >
-          {label}
-        </button>
-      ))}
+      {GROUPS.map(([value, label]) => {
+        const count = value === "All" ? brands.length : brands.filter((item) => item.group === value).length;
+        return (
+          <button
+            key={value}
+            type="button"
+            className={group === value ? "selected" : ""}
+            aria-pressed={group === value}
+            onClick={() => chooseGroup(value)}
+          >
+            <span className="group-name">{label}</span>
+            <span className="group-meta">{brands.length ? `${count} brand${count === 1 ? "" : "s"}` : "Loading brands"}</span>
+          </button>
+        );
+      })}
     </div>
     <div className="page-controls">
       <label>
         Brand
         <select value={brand} onChange={(event) => setBrand(event.target.value)}>
-          <option>All</option>
+          <option value="All">{group === "All" ? "All brands" : "All brands in this group"}</option>
           {visibleBrands.map((item) => (
             <option key={item.id}>{item.name}</option>
           ))}
         </select>
       </label>
       <DateField value={date} onChange={setDate} />
-      <button type="button" className={live ? "live on" : "live off"} onClick={() => setLive((value) => !value)}>
-        {live ? "Live: ON" : "Live: OFF"}
+      <button type="button" className={live ? "live on" : "live off"} aria-pressed={live} onClick={() => setLive((value) => !value)}>
+        <span className="live-copy">
+          <strong>{live ? "Live on" : "Live off"}</strong>
+          <small>{live ? "Updates every second" : "Updates are paused"}</small>
+        </span>
       </button>
       <button type="button" className="primary" onClick={refreshNow} disabled={refreshing}>
         {refreshing ? "Refreshing…" : "Refresh now"}
       </button>
-      <p className="status">{statusText(live, refreshing, data)}</p>
+      <p className="status control-status">
+        <strong>{viewStatus.title}</strong>
+        <span>{viewStatus.detail}</span>
+      </p>
       {error && <p className="form-error">{error}</p>}
     </div>
+    </section>
     <BankLedger date={date} group={group} brand={brand} revision={data?.revision || ""} />
     <div className="workspace">
       <aside className="side">
@@ -1420,11 +1441,19 @@ function amountTone(value) {
   return amount > 0 ? "up" : "down";
 }
 
-function statusText(live, refreshing, data) {
-  if (refreshing) return "Reading the brand APIs.";
+function friendlyStatus(live, refreshing, data) {
+  if (refreshing) return { title: "Refreshing", detail: "Reading the brand APIs" };
   const line = data?.status_line || "Waiting for the first API response.";
-  if (live) return line;
-  return `Live is off. ${line.replace(/^Live\s/, "")}`;
+  const time = line.match(/\d{2}:\d{2}:\d{2}/)?.[0] || "";
+  const rows = line.match(/([\d,]+)\s+(?:API|saved) rows/);
+  const count = rows ? Number(rows[1].replace(/,/g, "")).toLocaleString() : "";
+  if (line.includes("refused") || (line && !time && !count)) {
+    return { title: live ? "Live" : "Paused", detail: line };
+  }
+  return {
+    title: time ? (live ? `Updated ${time}` : `Paused · ${time}`) : (live ? "Waiting for an update" : "Paused"),
+    detail: count ? `${count} transactions in this view` : line,
+  };
 }
 
 function rowClass(row) {

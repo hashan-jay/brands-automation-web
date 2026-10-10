@@ -46,12 +46,15 @@ export default function App() {
         </div>
         <div className="top-actions">
           {user.is_staff && (
-            <button type="button" className="ghost" onClick={() => setPage(page === "users" ? "dashboard" : "users")}>
+            <button type="button" className={`ghost${page === "users" ? " selected" : ""}`} onClick={() => setPage(page === "users" ? "dashboard" : "users")}>
               {page === "users" ? "Transactions" : "Users"}
             </button>
           )}
-          <span className="who">{user.username}</span>
-          <button type="button" className="ghost" onClick={logout}>
+          <span className="who">
+            <span className="who-mark" aria-hidden="true">{user.username.slice(0, 1).toUpperCase()}</span>
+            {user.username}
+          </span>
+          <button type="button" className="ghost logout" onClick={logout}>
             Log out
           </button>
         </div>
