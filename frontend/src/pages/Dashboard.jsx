@@ -400,9 +400,97 @@ function openTransaction(row, setOpened) {
   setOpened({ brand: brandName, id, token: Date.now() });
 }
 
+let openModals = 0;
+let releasePageScroll = null;
+
+function popupCanScroll(event) {
+  const deltaY = event.deltaY || 0;
+  const deltaX = event.deltaX || 0;
+  let node = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const modal = node?.closest?.(".modal");
+  if (!modal) return false;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    const canY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+    const canX = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
+    if (canY && deltaY) {
+      const atTop = node.scrollTop <= 0;
+      const atBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+      if ((deltaY < 0 && !atTop) || (deltaY > 0 && !atBottom)) return true;
+    }
+    if (canX && deltaX && Math.abs(deltaX) > Math.abs(deltaY)) {
+      const atLeft = node.scrollLeft <= 0;
+      const atRight = node.scrollLeft + node.clientWidth >= node.scrollWidth - 1;
+      if ((deltaX < 0 && !atLeft) || (deltaX > 0 && !atRight)) return true;
+    }
+    if (node === modal) break;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function lockPageScroll() {
+  openModals += 1;
+  const body = document.body;
+  const root = document.documentElement;
+  if (!body.classList.contains("modal-open")) {
+    const scrollY = window.scrollY;
+    body.dataset.modalOverflow = body.style.overflow;
+    body.dataset.modalPadding = body.style.paddingRight;
+    root.dataset.modalOverflow = root.style.overflow;
+    root.dataset.modalScroll = String(scrollY);
+    const scrollbar = window.innerWidth - root.clientWidth;
+    body.style.overflow = "hidden";
+    root.style.overflow = "hidden";
+    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
+    body.classList.add("modal-open");
+    window.scrollTo(0, scrollY);
+
+    const keepPosition = () => {
+      const y = Number(root.dataset.modalScroll || 0);
+      if (window.scrollY !== y) window.scrollTo(0, y);
+    };
+    const stopPageWheel = (event) => {
+      if (!popupCanScroll(event)) event.preventDefault();
+    };
+    const stopBackdropTouch = (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest(".modal")) event.preventDefault();
+    };
+    window.addEventListener("scroll", keepPosition);
+    window.addEventListener("wheel", stopPageWheel, { passive: false });
+    window.addEventListener("touchmove", stopBackdropTouch, { passive: false });
+    releasePageScroll = () => {
+      window.removeEventListener("scroll", keepPosition);
+      window.removeEventListener("wheel", stopPageWheel);
+      window.removeEventListener("touchmove", stopBackdropTouch);
+      releasePageScroll = null;
+    };
+  }
+  return () => {
+    openModals = Math.max(0, openModals - 1);
+    if (openModals > 0) return;
+    const y = Number(root.dataset.modalScroll || window.scrollY);
+    releasePageScroll?.();
+    body.style.overflow = body.dataset.modalOverflow || "";
+    body.style.paddingRight = body.dataset.modalPadding || "";
+    root.style.overflow = root.dataset.modalOverflow || "";
+    delete body.dataset.modalOverflow;
+    delete body.dataset.modalPadding;
+    delete root.dataset.modalOverflow;
+    delete root.dataset.modalScroll;
+    body.classList.remove("modal-open");
+    window.scrollTo(0, y);
+  };
+}
+
 function TransactionDialog({ request, onClose }) {
   const [state, setState] = useState({ status: "loading", body: null, error: "" });
   const requestId = useRef(0);
+
+  useEffect(() => {
+    return lockPageScroll();
+  }, []);
 
   useEffect(() => {
     function onKey(event) {
@@ -801,6 +889,10 @@ function BankDayDialog({ account, group, brand, revision, onClose }) {
   const [day, setDay] = useState(today);
   const [state, setState] = useState({ status: "loading", body: null, error: "" });
   const requestId = useRef(0);
+
+  useEffect(() => {
+    return lockPageScroll();
+  }, []);
 
   useEffect(() => {
     function onKey(event) {
