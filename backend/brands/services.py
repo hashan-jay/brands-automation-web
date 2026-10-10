@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from django.db import close_old_connections, transaction
-from django.db.models import Count, DecimalField, Q, Sum
+from django.db.models import Count, DecimalField, Max, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -28,8 +28,10 @@ _HTML_RE = re.compile(r"<[^>]+>")
 _lock = threading.Lock()
 _cache_lock = threading.Lock()
 _bank_status_lock = threading.Lock()
+_numbers_lock = threading.Lock()
 _BANK_STATUS_TTL = 30.0
-_bank_status_cache: dict[int, tuple[float, set[tuple[str, str]]]] = {}
+_bank_status_cache: dict[int, tuple[float, list[dict]]] = {}
+_numbers_ready = False
 _cache: dict[tuple[str, str, str], dict] = {}
 _http_local = threading.local()
 _TRANSIENT = {"ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout"}
@@ -299,6 +301,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict], catalog: dict[str
                 bank=str(bank.get("bank") or "")[:128],
                 bank_name=_selected_bank_name(raw),
                 bank_account_name=_bank_account_name(raw, catalog or {}),
+                bank_account_number=_org_account_number(raw),
                 acc_name=str(bank.get("bankAccountName") or "")[:255],
                 acc_no=str(bank.get("bankAccountNumber") or "")[:64],
                 bsb=str(bank.get("bankBSB") or "")[:32],
@@ -332,6 +335,7 @@ def _store_rows(brand: Brand, day: date, raw_rows: list[dict], catalog: dict[str
                 "bank",
                 "bank_name",
                 "bank_account_name",
+                "bank_account_number",
                 "acc_name",
                 "acc_no",
                 "bsb",
@@ -416,6 +420,18 @@ def _bank_account_name(raw: dict, catalog: dict[str, str]) -> str:
     if not bank_id or bank_id in {"0", "None"}:
         return ""
     return str(catalog.get(bank_id) or "")[:255]
+
+
+def _org_account_number(raw: dict) -> str:
+    """Organization account number on a completed deposit or withdrawal.
+
+    This is the company bank account, not the customer's acc_no.
+    """
+    if str(raw.get("status") or "") != "COMPLETED":
+        return ""
+    if str(raw.get("type") or "") not in {"DEPOSIT", "WITHDRAW"}:
+        return ""
+    return _clean_label(_org_bank(raw).get("accountNumber"))[:128]
 
 
 def _bank(value: object) -> dict:
@@ -512,6 +528,7 @@ def _signature(prepared: list[Transaction]) -> str:
                     item.bank,
                     item.bank_name,
                     item.bank_account_name,
+                    item.bank_account_number,
                     item.acc_name,
                     item.acc_no,
                     item.bsb,
@@ -580,69 +597,108 @@ _LEDGER_ZERO_COLUMNS = {
 }
 
 
+def _norm_label(value: object) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _usable_account_number(value: object) -> str:
+    """Account numbers that identify one company bank account.
+
+    Emails and PayIDs count. A blank value or a zeros-only placeholder does
+    not, because several different people share those placeholders.
+    """
+    text = _clean_label(value)
+    if not text:
+        return ""
+    compact = text.replace(" ", "")
+    if compact.casefold() in {"n/a", "na", "none", "null", "-", "--"}:
+        return ""
+    digits = [char for char in compact if char.isdigit()]
+    if digits and set(digits) == {"0"} and "@" not in compact and not any(char.isalpha() for char in compact):
+        return ""
+    return text
+
+
+def _ledger_identity(bank_name: str, account_name: str, account_number: str = "") -> tuple:
+    """One bank account is its bank code plus its account number.
+
+    The account name is the current label for that pair. Without a usable
+    number, the exact stored name stays the identity.
+    """
+    number = _usable_account_number(account_number)
+    code = _norm_label(bank_name)
+    if code and number:
+        return ("num", code, _norm_label(number))
+    return ("name", str(bank_name or ""), str(account_name or ""))
+
+
 def _bank_key(bank_name: str, account_name: str) -> tuple[str, str]:
-    return (
-        " ".join(str(bank_name or "").casefold().split()),
-        " ".join(str(account_name or "").casefold().split()),
-    )
+    return (_norm_label(bank_name), _norm_label(account_name))
 
 
 def _active_bank_keys(brand: Brand | None = None, brands: list[Brand] | None = None) -> set[tuple[str, str]]:
-    """Bank code and account name pairs the finance API currently marks ACTIVE.
+    """Bank code and account name pairs the finance API currently marks ACTIVE."""
+    return {
+        _bank_key(item["code"], item["account_name"])
+        for item in _bank_records(brand, brands)
+        if item["active"] and item["code"] and item["account_name"]
+    }
 
-    Each brand's /banks/getBank list has one active account. A group or every
-    brand is combined when the sheet is not filtered to a single brand. A short
-    cache keeps the ledger from calling every brand on each refresh.
+
+def _bank_records(brand: Brand | None = None, brands: list[Brand] | None = None) -> list[dict]:
+    """Company banks from each brand's /banks/getBank list.
+
+    A short cache keeps the ledger from calling every brand on each refresh.
     """
     if brand is not None:
         brands = [brand]
     elif brands is None:
         brands = list(Brand.objects.filter(is_active=True))
     now = time.monotonic()
-    keys: set[tuple[str, str]] = set()
+    records: list[dict] = []
     stale: list[Brand] = []
     with _bank_status_lock:
         for item in brands:
             cached = _bank_status_cache.get(item.pk)
             if cached and now - cached[0] < _BANK_STATUS_TTL:
-                keys |= cached[1]
+                records.extend(cached[1])
             else:
                 stale.append(item)
     if not stale:
-        return keys
-    loaded = _load_active_banks(stale)
+        return records
+    loaded = _load_bank_records(stale)
     with _bank_status_lock:
         for item in stale:
             fresh = loaded.get(item.pk)
             if fresh is None:
                 previous = _bank_status_cache.get(item.pk)
                 if previous:
-                    keys |= previous[1]
+                    records.extend(previous[1])
                 continue
             _bank_status_cache[item.pk] = (time.monotonic(), fresh)
-            keys |= fresh
-    return keys
+            records.extend(fresh)
+    return records
 
 
-def _load_active_banks(brands: list[Brand]) -> dict[int, set[tuple[str, str]] | None]:
-    def load(item: Brand) -> tuple[int, set[tuple[str, str]] | None]:
+def _load_bank_records(brands: list[Brand]) -> dict[int, list[dict] | None]:
+    def load(item: Brand) -> tuple[int, list[dict] | None]:
         close_old_connections()
         try:
-            return item.pk, _fetch_active_banks(item)
+            return item.pk, _fetch_bank_records(item)
         except (requests.RequestException, ValueError, TypeError):
             return item.pk, None
 
     if len(brands) == 1:
-        brand_id, keys = load(brands[0])
-        return {brand_id: keys}
+        brand_id, records = load(brands[0])
+        return {brand_id: records}
     workers = min(8, len(brands))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bank-status") as pool:
         return dict(pool.map(load, brands))
 
 
-def _fetch_active_banks(brand: Brand) -> set[tuple[str, str]]:
+def _fetch_bank_records(brand: Brand) -> list[dict]:
     if not brand.domain or not brand.token or not brand.merchant_id:
-        return set()
+        return []
     url = brand.domain.rstrip("/") + "/api/v1/index.php"
     response = _post(
         url,
@@ -658,17 +714,120 @@ def _fetch_active_banks(brand: Brand) -> set[tuple[str, str]]:
         raise ValueError("The brand bank list was refused")
     data = body.get("data")
     rows = data if isinstance(data, list) else []
-    active: set[tuple[str, str]] = set()
+    records = []
     for item in rows:
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "").strip().upper() != "ACTIVE":
-            continue
         code = str(item.get("code") or "").strip()
-        account = str(item.get("accountName") or "").strip()
-        if code and account:
-            active.add(_bank_key(code, account))
-    return active
+        account = _clean_label(item.get("accountName"))
+        number = _clean_label(item.get("accountNumber"))
+        if not code or not account:
+            continue
+        records.append(
+            {
+                "code": code[:128],
+                "account_name": account[:255],
+                "account_number": number[:128],
+                "active": str(item.get("status") or "").strip().upper() == "ACTIVE",
+            }
+        )
+    return records
+
+
+def _directory_index(records: list[dict]) -> dict:
+    """Current account name for each bank code and account number."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    name_numbers: dict[tuple[str, str], set[str]] = {}
+    for record in records:
+        code = _norm_label(record["code"])
+        name = _norm_label(record["account_name"])
+        number = _usable_account_number(record["account_number"])
+        if code and number:
+            groups.setdefault((code, _norm_label(number)), []).append(record)
+        if code and name:
+            name_numbers.setdefault((code, name), set()).add(number)
+    names: dict[tuple[str, str], str] = {}
+    codes: dict[tuple[str, str], str] = {}
+    numbers: dict[tuple[str, str], str] = {}
+    for key, grouped in groups.items():
+        chosen = _prefer_bank_record(grouped)
+        names[key] = chosen["account_name"]
+        codes[key] = chosen["code"]
+        numbers[key] = _usable_account_number(chosen["account_number"])
+    by_name: dict[tuple[str, str], str] = {}
+    for key, found in name_numbers.items():
+        usable = {item for item in found if item}
+        if len(usable) == 1:
+            by_name[key] = next(iter(usable))
+    return {
+        "names": names,
+        "codes": codes,
+        "numbers": numbers,
+        "by_name": by_name,
+        "active_numbers": {
+            (_norm_label(record["code"]), _norm_label(number))
+            for record in records
+            if record["active"] and (number := _usable_account_number(record["account_number"]))
+        },
+        "active_names": {
+            _bank_key(record["code"], record["account_name"])
+            for record in records
+            if record["active"]
+        },
+    }
+
+
+def _prefer_bank_record(records: list[dict]) -> dict:
+    active = [item for item in records if item["active"]]
+    pool = active or records
+    counts: dict[str, int] = {}
+    for item in pool:
+        counts[item["account_name"]] = counts.get(item["account_name"], 0) + 1
+    best = max(counts.values())
+    chosen = {name for name, count in counts.items() if count == best}
+    for item in pool:
+        if item["account_name"] in chosen:
+            return item
+    return pool[0]
+
+
+def _resolve_number(bank_name: str, account_name: str, account_number: str, directory: dict) -> str:
+    usable = _usable_account_number(account_number)
+    if usable:
+        return usable
+    return directory["by_name"].get((_norm_label(bank_name), _norm_label(account_name)), "")
+
+
+def _ensure_account_numbers() -> None:
+    """Copy the current account number onto stored rows that still match that name."""
+    global _numbers_ready
+    if _numbers_ready:
+        return
+    with _numbers_lock:
+        if _numbers_ready:
+            return
+        brands = list(Brand.objects.filter(is_active=True))
+        _bank_records(brands=brands)
+        if any(_bank_status_cache.get(item.pk) is None for item in brands):
+            return
+        directory = _directory_index(_bank_records(brands=brands))
+        pairs = (
+            Transaction.objects.filter(bank_account_number="")
+            .exclude(bank_name="")
+            .exclude(bank_account_name="")
+            .values_list("bank_name", "bank_account_name")
+            .distinct()
+        )
+        for bank_name, account_name in pairs:
+            number = directory["by_name"].get((_norm_label(bank_name), _norm_label(account_name)))
+            if not number:
+                continue
+            Transaction.objects.filter(
+                bank_name=bank_name,
+                bank_account_name=account_name,
+                bank_account_number="",
+            ).update(bank_account_number=number[:128])
+        _numbers_ready = True
 
 
 def bank_ledger(day: date, brand_name: str = "All", group_name: str = "All") -> dict:
@@ -698,6 +857,7 @@ def update_bank_ledger(
     set_limit: bool = False,
     brand_name: str = "All",
     group_name: str = "All",
+    account_number: str = "",
 ) -> dict:
     bank_name = bank_name.strip()
     account_name = account_name.strip()
@@ -706,11 +866,12 @@ def update_bank_ledger(
         raise LookupError("That brand was not found.")
     if status is not None and status not in LEDGER_STATUSES:
         raise ValueError("Choose a status from the list.")
-    if not _ledger_account_exists(bank_name, account_name):
+    current = _find_ledger_row(_ledger_rows(day, brand, grouped), bank_name, account_name, account_number)
+    if current is None:
         raise LookupError("That bank account was not found.")
     setting, _created = BankLedgerSetting.objects.get_or_create(
-        bank_name=bank_name,
-        account_name=account_name,
+        bank_name=current["bank_name"],
+        account_name=current["account_name"],
     )
     changed: list[str] = []
     if status is not None and setting.status != status:
@@ -721,13 +882,11 @@ def update_bank_ledger(
         changed.append("limit_amount")
     if changed:
         setting.save(update_fields=changed)
-    row = next(
-        (
-            item
-            for item in _ledger_rows(day, brand, grouped)
-            if item["bank_name"] == bank_name and item["account_name"] == account_name
-        ),
-        None,
+    row = _find_ledger_row(
+        _ledger_rows(day, brand, grouped),
+        current["bank_name"],
+        current["account_name"],
+        current.get("account_number") or "",
     )
     if row is None:
         raise LookupError("That bank account was not found.")
@@ -775,21 +934,25 @@ def _ledger_account_exists(
     account_name: str,
     brand: Brand | None = None,
     grouped: list[Brand] | None = None,
+    account_number: str = "",
 ) -> bool:
-    rows = Transaction.objects.filter(
-        status="COMPLETED",
-        type__in=("DEPOSIT", "WITHDRAW"),
-        bank_name=bank_name,
-        bank_account_name=account_name,
-    )
-    if brand is not None:
-        rows = rows.filter(brand=brand)
-    elif grouped is not None:
-        rows = rows.filter(brand__in=grouped)
-    return rows.exists()
+    return _ledger_account_queryset(bank_name, account_name, brand, grouped, account_number).exists()
+
+
+def _find_ledger_row(rows: list[dict], bank_name: str, account_name: str, account_number: str = "") -> dict | None:
+    wanted = _ledger_identity(bank_name, account_name, account_number)
+    for item in rows:
+        if _ledger_identity(item["bank_name"], item["account_name"], item.get("account_number") or "") == wanted:
+            return item
+    if not _usable_account_number(account_number):
+        for item in rows:
+            if item["bank_name"] == bank_name and item["account_name"] == account_name:
+                return item
+    return None
 
 
 def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | None = None) -> list[dict]:
+    _ensure_account_numbers()
     start, end = _sydney_bounds(day)
     zero = Decimal("0.00")
     base = (
@@ -803,35 +966,35 @@ def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | N
         base = base.filter(brand=brand)
     elif grouped is not None:
         base = base.filter(brand__in=grouped)
-    prior = _ledger_groups(base.filter(settled_at__lt=start))
-    current = _ledger_groups(base.filter(settled_at__gte=start))
-    settings = {
-        (item.bank_name, item.account_name): item
-        for item in BankLedgerSetting.objects.all()
-    }
-    active_keys = _active_bank_keys(brand, grouped)
-    moves = _transfer_maps(day)
-    keys = set(prior) | set(current) | _transfer_keys_for_scope(day, brand, grouped, set(prior) | set(current))
+    directory = _directory_index(_bank_records(brand, grouped))
+    prior = _fold_accounts(_ledger_slices(base.filter(settled_at__lt=start)), directory)
+    current = _fold_accounts(_ledger_slices(base.filter(settled_at__gte=start)), directory)
+    settings = list(BankLedgerSetting.objects.all())
+    moves = _transfer_maps(day, directory)
+    transfer_labels = _transfer_labels(day, directory)
+    keys = set(prior) | set(current) | _transfer_keys_for_scope(day, brand, grouped, set(prior) | set(current), directory)
     rows = []
-    for key in keys:
-        bank_name, account_name = key
-        before = prior.get(key)
-        today = current.get(key)
+    for ident in keys:
+        before = prior.get(ident)
+        today = current.get(ident)
+        sample = today or before or transfer_labels.get(ident) or _display_for_identity(ident, directory)
         deposits = today["deposits"] if today else zero
         withdrawals = today["withdrawals"] if today else zero
         deposit_count = (before["deposit_count"] if before else 0) + (today["deposit_count"] if today else 0)
         withdraw_count = (before["withdraw_count"] if before else 0) + (today["withdraw_count"] if today else 0)
-        setting = settings.get(key)
+        setting = _setting_for_identity(ident, settings, directory)
         chosen = setting.status if setting and setting.status in LEDGER_STATUSES else ""
         limit_amount = setting.limit_amount if setting else None
-        transfer = _moves_for(moves, key)
+        transfer = _moves_for(moves, ident)
         txn_opening = (before["deposits"] + before["withdrawals"]) if before else zero
         opening = txn_opening + transfer["prior_in"] - transfer["prior_out"]
+        account_number = sample.get("account_number") or ""
         rows.append(
             {
-                "bank_name": bank_name,
-                "account_name": account_name,
-                "activity": "Active" if _bank_key(bank_name, account_name) in active_keys else "Inactive",
+                "bank_name": sample["bank_name"],
+                "account_name": sample["account_name"],
+                "account_number": account_number,
+                "activity": "Active" if _identity_is_active(ident, sample, directory) else "Inactive",
                 "status": chosen or _ledger_status(deposit_count, withdraw_count),
                 "opening": _money_text(opening),
                 "closing": _money_text(opening + deposits + withdrawals + transfer["day_in"] - transfer["day_out"]),
@@ -843,22 +1006,99 @@ def _ledger_rows(day: date, brand: Brand | None = None, grouped: list[Brand] | N
                 "transfer_out": _money_text(-transfer["day_out"] if transfer["day_out"] else zero),
             }
         )
-    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold()))
+    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold(), item["account_number"].casefold()))
     return rows
 
 
-def _ledger_groups(queryset) -> dict[tuple[str, str], dict]:
+def _ledger_slices(queryset) -> list[dict]:
     zero = Decimal("0.00")
-    grouped = queryset.values("bank_name", "bank_account_name").annotate(
-        deposits=Coalesce(Sum("amount", filter=Q(type="DEPOSIT")), zero, output_field=_MONEY_FIELD),
-        withdrawals=Coalesce(Sum("amount", filter=Q(type="WITHDRAW")), zero, output_field=_MONEY_FIELD),
-        deposit_count=Count("id", filter=Q(type="DEPOSIT")),
-        withdraw_count=Count("id", filter=Q(type="WITHDRAW")),
+    return list(
+        queryset.values("bank_name", "bank_account_name", "bank_account_number").annotate(
+            deposits=Coalesce(Sum("amount", filter=Q(type="DEPOSIT")), zero, output_field=_MONEY_FIELD),
+            withdrawals=Coalesce(Sum("amount", filter=Q(type="WITHDRAW")), zero, output_field=_MONEY_FIELD),
+            deposit_count=Count("id", filter=Q(type="DEPOSIT")),
+            withdraw_count=Count("id", filter=Q(type="WITHDRAW")),
+            last_settled=Max("settled_at"),
+        )
     )
-    return {
-        (row["bank_name"], row["bank_account_name"]): row
-        for row in grouped
-    }
+
+
+def _fold_accounts(slices: list[dict], directory: dict) -> dict[tuple, dict]:
+    zero = Decimal("0.00")
+    folded: dict[tuple, dict] = {}
+    for row in slices:
+        number = _resolve_number(
+            row["bank_name"],
+            row["bank_account_name"],
+            row.get("bank_account_number") or "",
+            directory,
+        )
+        ident = _ledger_identity(row["bank_name"], row["bank_account_name"], number)
+        deposits = row["deposits"] or zero
+        withdrawals = row["withdrawals"] or zero
+        last = row.get("last_settled")
+        bucket = folded.get(ident)
+        if bucket is None:
+            folded[ident] = {
+                "bank_name": row["bank_name"],
+                "account_name": row["bank_account_name"],
+                "account_number": number,
+                "deposits": deposits,
+                "withdrawals": withdrawals,
+                "deposit_count": int(row["deposit_count"] or 0),
+                "withdraw_count": int(row["withdraw_count"] or 0),
+                "last_settled": last,
+            }
+            continue
+        bucket["deposits"] += deposits
+        bucket["withdrawals"] += withdrawals
+        bucket["deposit_count"] += int(row["deposit_count"] or 0)
+        bucket["withdraw_count"] += int(row["withdraw_count"] or 0)
+        if last is not None and (bucket["last_settled"] is None or last >= bucket["last_settled"]):
+            bucket["last_settled"] = last
+            if ident[0] != "num":
+                bucket["bank_name"] = row["bank_name"]
+                bucket["account_name"] = row["bank_account_name"]
+    for ident, bucket in folded.items():
+        if ident[0] != "num":
+            bucket["account_number"] = ""
+            continue
+        key = (ident[1], ident[2])
+        if key in directory["names"]:
+            bucket["account_name"] = directory["names"][key]
+        if key in directory["codes"]:
+            bucket["bank_name"] = directory["codes"][key]
+        if key in directory["numbers"]:
+            bucket["account_number"] = directory["numbers"][key]
+    return folded
+
+
+def _display_for_identity(ident: tuple, directory: dict) -> dict:
+    if ident[0] == "num":
+        key = (ident[1], ident[2])
+        return {
+            "bank_name": directory["codes"].get(key, ident[1]),
+            "account_name": directory["names"].get(key, ""),
+            "account_number": directory["numbers"].get(key, ident[2]),
+        }
+    return {"bank_name": ident[1], "account_name": ident[2], "account_number": ""}
+
+
+def _identity_is_active(ident: tuple, sample: dict, directory: dict) -> bool:
+    if ident[0] == "num":
+        return (ident[1], ident[2]) in directory["active_numbers"]
+    return _bank_key(sample["bank_name"], sample["account_name"]) in directory["active_names"]
+
+
+def _setting_for_identity(ident: tuple, settings: list[BankLedgerSetting], directory: dict) -> BankLedgerSetting | None:
+    found = None
+    for setting in settings:
+        number = directory["by_name"].get((_norm_label(setting.bank_name), _norm_label(setting.account_name)), "")
+        if _ledger_identity(setting.bank_name, setting.account_name, number) != ident:
+            continue
+        if found is None or (found.limit_amount is None and setting.limit_amount is not None):
+            found = setting
+    return found
 
 
 def bank_ledger_day(
@@ -867,28 +1107,29 @@ def bank_ledger_day(
     account_name: str,
     brand_name: str = "All",
     group_name: str = "All",
+    account_number: str = "",
 ) -> dict:
     """One bank account for one Sydney day: the sheet figures and that day's transactions.
 
-    The figures use the same opening, closing, deposit, withdrawal, and transfer
-    rules as the balance sheet. Transactions are the completed deposits and
-    withdrawals that settled on that day for this bank and account name. A
-    chosen brand counts only that brand.
+    The account is the bank code plus its account number, so a renamed account
+    stays one row. Transactions are the completed deposits and withdrawals that
+    settled on that day for that account. A chosen brand counts only that brand.
     """
     bank_name = bank_name.strip()
     account_name = account_name.strip()
     brand, grouped, missing = _ledger_scope(group_name, brand_name)
     if missing:
         raise LookupError("That brand was not found.")
-    if not _ledger_account_exists(bank_name, account_name, brand, grouped):
+    row = _find_ledger_row(_ledger_rows(day, brand, grouped), bank_name, account_name, account_number)
+    if row is None:
         raise LookupError("That bank account was not found.")
     start, end = _sydney_bounds(day)
-    base = _ledger_account_queryset(bank_name, account_name, brand, grouped)
-    prior = _ledger_totals(base.filter(settled_at__lt=start))
-    current = _ledger_totals(base.filter(settled_at__gte=start, settled_at__lt=end))
-    row = _ledger_account_payload(bank_name, account_name, prior, current, _account_moves(bank_name, account_name, day))
-    row["activity"] = (
-        "Active" if _bank_key(bank_name, account_name) in _active_bank_keys(brand, grouped) else "Inactive"
+    base = _ledger_account_queryset(
+        row["bank_name"],
+        row["account_name"],
+        brand,
+        grouped,
+        row.get("account_number") or "",
     )
     transactions = []
     settled_rows = (
@@ -909,17 +1150,21 @@ def _ledger_account_queryset(
     account_name: str,
     brand: Brand | None = None,
     grouped: list[Brand] | None = None,
+    account_number: str = "",
 ):
     rows = Transaction.objects.filter(
         status="COMPLETED",
         type__in=("DEPOSIT", "WITHDRAW"),
-        bank_name=bank_name,
-        bank_account_name=account_name,
     )
     if brand is not None:
         rows = rows.filter(brand=brand)
     elif grouped is not None:
         rows = rows.filter(brand__in=grouped)
+    number = _usable_account_number(account_number)
+    if number:
+        rows = rows.filter(bank_name__iexact=bank_name.strip(), bank_account_number__iexact=number)
+    else:
+        rows = rows.filter(bank_name=bank_name, bank_account_name=account_name)
     return rows.annotate(settled_at=Coalesce("processed_at", "created_at"))
 
 
@@ -972,30 +1217,38 @@ def _ledger_status(deposit_count: int, withdraw_count: int) -> str:
     return "Inactive"
 
 
-def _sum_transfer_side(queryset, bank_field: str, account_field: str) -> dict[tuple[str, str], Decimal]:
+def _sum_transfer_side(
+    queryset,
+    bank_field: str,
+    account_field: str,
+    number_field: str,
+    directory: dict,
+) -> dict[tuple, Decimal]:
     zero = Decimal("0.00")
-    grouped = queryset.values(bank_field, account_field).annotate(
+    grouped = queryset.values(bank_field, account_field, number_field).annotate(
         total=Coalesce(Sum("amount"), zero, output_field=_MONEY_FIELD),
     )
-    return {
-        (row[bank_field], row[account_field]): row["total"] or zero
-        for row in grouped
-    }
+    totals: dict[tuple, Decimal] = {}
+    for row in grouped:
+        number = _resolve_number(row[bank_field], row[account_field], row[number_field] or "", directory)
+        ident = _ledger_identity(row[bank_field], row[account_field], number)
+        totals[ident] = totals.get(ident, zero) + (row["total"] or zero)
+    return totals
 
 
-def _transfer_maps(day: date) -> dict[str, dict[tuple[str, str], Decimal]]:
+def _transfer_maps(day: date, directory: dict) -> dict[str, dict[tuple, Decimal]]:
     """Transfer totals for one Sydney day and for every earlier day."""
     prior = BankTransfer.objects.filter(transfer_date__lt=day)
     current = BankTransfer.objects.filter(transfer_date=day)
     return {
-        "prior_in": _sum_transfer_side(prior, "to_bank_name", "to_account_name"),
-        "prior_out": _sum_transfer_side(prior, "from_bank_name", "from_account_name"),
-        "day_in": _sum_transfer_side(current, "to_bank_name", "to_account_name"),
-        "day_out": _sum_transfer_side(current, "from_bank_name", "from_account_name"),
+        "prior_in": _sum_transfer_side(prior, "to_bank_name", "to_account_name", "to_account_number", directory),
+        "prior_out": _sum_transfer_side(prior, "from_bank_name", "from_account_name", "from_account_number", directory),
+        "day_in": _sum_transfer_side(current, "to_bank_name", "to_account_name", "to_account_number", directory),
+        "day_out": _sum_transfer_side(current, "from_bank_name", "from_account_name", "from_account_number", directory),
     }
 
 
-def _moves_for(moves: dict, key: tuple[str, str]) -> dict[str, Decimal]:
+def _moves_for(moves: dict, key: tuple) -> dict[str, Decimal]:
     zero = Decimal("0.00")
     return {
         "prior_in": moves["prior_in"].get(key, zero),
@@ -1005,34 +1258,75 @@ def _moves_for(moves: dict, key: tuple[str, str]) -> dict[str, Decimal]:
     }
 
 
-def _account_moves(bank_name: str, account_name: str, day: date) -> dict[str, Decimal]:
-    return _moves_for(_transfer_maps(day), (bank_name, account_name))
+def _transfer_labels(day: date, directory: dict) -> dict[tuple, dict]:
+    labels: dict[tuple, dict] = {}
+    fields = (
+        "from_bank_name",
+        "from_account_name",
+        "from_account_number",
+        "to_bank_name",
+        "to_account_name",
+        "to_account_number",
+    )
+    for item in BankTransfer.objects.filter(transfer_date__lte=day).values(*fields):
+        for prefix in ("from", "to"):
+            bank_name = item[f"{prefix}_bank_name"]
+            account_name = item[f"{prefix}_account_name"]
+            number = _resolve_number(bank_name, account_name, item[f"{prefix}_account_number"] or "", directory)
+            ident = _ledger_identity(bank_name, account_name, number)
+            labels[ident] = {
+                "bank_name": bank_name,
+                "account_name": account_name,
+                "account_number": number,
+            }
+    return labels
 
 
-def _transfer_keys_for_scope(day: date, brand: Brand | None, grouped: list[Brand] | None, already: set) -> set[tuple[str, str]]:
+def _transfer_keys_for_scope(
+    day: date,
+    brand: Brand | None,
+    grouped: list[Brand] | None,
+    already: set,
+    directory: dict,
+) -> set[tuple]:
     """Accounts with a transfer on or before this day that the sheet should still list."""
-    keys = set()
-    for item in BankTransfer.objects.filter(transfer_date__lte=day).values(
-        "from_bank_name", "from_account_name", "to_bank_name", "to_account_name"
-    ):
-        keys.add((item["from_bank_name"], item["from_account_name"]))
-        keys.add((item["to_bank_name"], item["to_account_name"]))
+    keys = set(_transfer_labels(day, directory))
     extra = keys - already
     if brand is None and grouped is None:
         return extra
-    return {key for key in extra if _ledger_account_exists(key[0], key[1], brand, grouped)}
+    labels = _transfer_labels(day, directory)
+    return {
+        key
+        for key in extra
+        if _ledger_account_exists(
+            labels[key]["bank_name"],
+            labels[key]["account_name"],
+            brand,
+            grouped,
+            labels[key]["account_number"],
+        )
+    }
 
 
 def bank_transfer_accounts() -> list[dict]:
-    pairs = (
+    _ensure_account_numbers()
+    directory = _directory_index(_bank_records())
+    slices = _ledger_slices(
         Transaction.objects.filter(status="COMPLETED", type__in=("DEPOSIT", "WITHDRAW"))
         .exclude(bank_name="")
         .exclude(bank_account_name="")
-        .values_list("bank_name", "bank_account_name")
-        .distinct()
+        .annotate(settled_at=Coalesce("processed_at", "created_at"))
     )
-    rows = [{"bank_name": bank, "account_name": account} for bank, account in pairs]
-    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold()))
+    rows = [
+        {
+            "bank_name": item["bank_name"],
+            "account_name": item["account_name"],
+            "account_number": item.get("account_number") or "",
+        }
+        for item in _fold_accounts(slices, directory).values()
+        if item["account_name"]
+    ]
+    rows.sort(key=lambda item: (item["bank_name"].casefold(), item["account_name"].casefold(), item["account_number"].casefold()))
     return rows
 
 
@@ -1049,6 +1343,8 @@ def create_bank_transfer(
     to_account_name: str,
     amount: Decimal,
     created_by=None,
+    from_account_number: str = "",
+    to_account_number: str = "",
 ) -> dict:
     from_bank_name = from_bank_name.strip()
     from_account_name = from_account_name.strip()
@@ -1056,11 +1352,17 @@ def create_bank_transfer(
     to_account_name = to_account_name.strip()
     if not from_bank_name or not from_account_name or not to_bank_name or not to_account_name:
         raise ValueError("Choose the bank the money leaves and the bank it arrives in.")
-    if (from_bank_name, from_account_name) == (to_bank_name, to_account_name):
+    _ensure_account_numbers()
+    directory = _directory_index(_bank_records())
+    from_number = _resolve_number(from_bank_name, from_account_name, from_account_number, directory)
+    to_number = _resolve_number(to_bank_name, to_account_name, to_account_number, directory)
+    if _ledger_identity(from_bank_name, from_account_name, from_number) == _ledger_identity(
+        to_bank_name, to_account_name, to_number
+    ):
         raise ValueError("Choose two different bank accounts.")
-    if not _ledger_account_exists(from_bank_name, from_account_name):
+    if not _ledger_account_exists(from_bank_name, from_account_name, account_number=from_number):
         raise LookupError("The bank sending the money is not in the bank list.")
-    if not _ledger_account_exists(to_bank_name, to_account_name):
+    if not _ledger_account_exists(to_bank_name, to_account_name, account_number=to_number):
         raise LookupError("The bank receiving the money is not in the bank list.")
     if amount != amount.quantize(Decimal("0.01")):
         raise ValueError("Use at most two decimal places.")
@@ -1072,8 +1374,10 @@ def create_bank_transfer(
         created_on=sydney_today(),
         from_bank_name=from_bank_name,
         from_account_name=from_account_name,
+        from_account_number=from_number[:128],
         to_bank_name=to_bank_name,
         to_account_name=to_account_name,
+        to_account_number=to_number[:128],
         amount=amount,
         created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
     )
@@ -1087,8 +1391,10 @@ def _transfer_payload(item: BankTransfer) -> dict:
         "created_on": item.created_on.isoformat(),
         "from_bank_name": item.from_bank_name,
         "from_account_name": item.from_account_name,
+        "from_account_number": item.from_account_number,
         "to_bank_name": item.to_bank_name,
         "to_account_name": item.to_account_name,
+        "to_account_number": item.to_account_number,
         "amount": _money_text(item.amount),
     }
 

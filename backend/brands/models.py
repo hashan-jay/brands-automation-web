@@ -46,6 +46,7 @@ class Transaction(models.Model):
     bank = models.CharField(max_length=128, blank=True)
     bank_name = models.CharField(max_length=128, blank=True)
     bank_account_name = models.CharField(max_length=255, blank=True)
+    bank_account_number = models.CharField(max_length=128, blank=True)
     acc_name = models.CharField(max_length=255, blank=True)
     acc_no = models.CharField(max_length=64, blank=True)
     bsb = models.CharField(max_length=32, blank=True)
@@ -62,6 +63,7 @@ class Transaction(models.Model):
         ]
         indexes = [
             models.Index(fields=["txn_date", "brand", "status"]),
+            models.Index(fields=["bank_name", "bank_account_number"], name="txn_bank_account_number"),
         ]
 
     def display(self) -> dict:
@@ -150,8 +152,10 @@ class BankTransfer(models.Model):
     created_on = models.DateField(db_index=True)
     from_bank_name = models.CharField(max_length=128)
     from_account_name = models.CharField(max_length=255)
+    from_account_number = models.CharField(max_length=128, blank=True)
     to_bank_name = models.CharField(max_length=128)
     to_account_name = models.CharField(max_length=255)
+    to_account_number = models.CharField(max_length=128, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
