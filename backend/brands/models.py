@@ -88,6 +88,48 @@ class Transaction(models.Model):
         }
 
 
+class Customer(models.Model):
+    """A player account on one brand, copied from /users/getAllUsers."""
+
+    brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name="customers")
+    external_id = models.CharField(max_length=64)
+    username = models.CharField(max_length=128, blank=True)
+    name = models.CharField(max_length=255, blank=True)
+    mobile = models.CharField(max_length=64, blank=True)
+    email = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=32, blank=True)
+    registered_at = models.DateTimeField(null=True, blank=True)
+    visited_at = models.DateTimeField(null=True, blank=True)
+    lifetime_deposit = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    lifetime_deposit_count = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["brand", "external_id"], name="uniq_brand_customer"),
+        ]
+        indexes = [
+            models.Index(fields=["brand", "registered_at"], name="customer_brand_registered"),
+            models.Index(fields=["username"], name="customer_username"),
+        ]
+
+    def __str__(self) -> str:
+        return self.username or self.external_id
+
+
+class CustomerSync(models.Model):
+    """How far the register backfill has read for one brand. Pages are oldest first."""
+
+    brand = models.OneToOneField(Brand, on_delete=models.CASCADE, related_name="customer_sync")
+    next_page = models.PositiveIntegerField(default=0)
+    total_pages = models.PositiveIntegerField(default=0)
+    message = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.brand.name} {self.next_page}/{self.total_pages}"
+
+
 class BrandSync(models.Model):
     brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name="syncs")
     day = models.DateField()

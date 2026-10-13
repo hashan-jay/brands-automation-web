@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
 import BankTransfers from "./pages/BankTransfers";
+import Customers from "./pages/Customers";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
@@ -50,6 +51,14 @@ export default function App() {
         <div className="top-actions">
           <button
             type="button"
+            className={`ghost${page === "customers" ? " selected" : ""}`}
+            aria-pressed={page === "customers"}
+            onClick={() => setPage(page === "customers" ? "dashboard" : "customers")}
+          >
+            Customers
+          </button>
+          <button
+            type="button"
             className={`ghost${page === "transfers" ? " selected" : ""}`}
             aria-pressed={page === "transfers"}
             onClick={() => setPage(page === "transfers" ? "dashboard" : "transfers")}
@@ -70,7 +79,15 @@ export default function App() {
           </button>
         </div>
       </header>
-      {page === "users" && user.is_staff ? <Users /> : page === "transfers" ? <BankTransfers /> : <Dashboard />}
+      {page === "users" && user.is_staff ? (
+        <Users />
+      ) : page === "customers" ? (
+        <Customers />
+      ) : page === "transfers" ? (
+        <BankTransfers />
+      ) : (
+        <Dashboard />
+      )}
     </div>
   );
 }

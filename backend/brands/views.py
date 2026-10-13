@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 from brands import livecache
 from brands.models import SYDNEY, Brand, sydney_today
 from brands.poller import note_watch, start_poller
+from brands.customers import customer_board, start_customer_sync
 from brands.services import (
     bank_accounts,
     bank_ledger,
@@ -154,6 +155,19 @@ class BankTransferAccountView(APIView):
         return _live_response({"accounts": bank_transfer_accounts()})
 
 
+class CustomersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        day = _parse_day(request.query_params.get("date"))
+        note_watch(day)
+        start_poller()
+        start_customer_sync()
+        brand_name = str(request.query_params.get("brand") or "All")
+        query = str(request.query_params.get("q") or "")[:80]
+        return _live_response(customer_board(day, brand_name, query, _parse_page(request.query_params.get("page"))))
+
+
 class TransactionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -197,6 +211,14 @@ def _parse_limit(value: object) -> Decimal | None:
     if not amount.is_finite() or abs(amount) >= Decimal("1000000000000"):
         raise ValueError("Enter a limit amount, or leave it blank for N/A.")
     return amount.quantize(Decimal("0.01"))
+
+
+def _parse_page(value: object) -> int:
+    try:
+        page = int(str(value or "1").strip())
+    except ValueError:
+        return 1
+    return min(max(page, 1), 100000)
 
 
 def _parse_day(value: object):
