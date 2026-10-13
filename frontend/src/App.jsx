@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
 import BankTransfers from "./pages/BankTransfers";
 import Customers from "./pages/Customers";
-import Dashboard from "./pages/Dashboard";
+import Dashboard, { lockPageScroll } from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
 
@@ -10,6 +10,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("dashboard");
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -23,6 +25,7 @@ export default function App() {
   }, []);
 
   async function logout() {
+    setLoggingOut(true);
     try {
       await api("/api/auth/logout/", { method: "POST" });
     } catch {
@@ -31,6 +34,8 @@ export default function App() {
     setToken("");
     setUser(null);
     setPage("dashboard");
+    setConfirmLogout(false);
+    setLoggingOut(false);
   }
 
   if (!ready) {
@@ -74,7 +79,7 @@ export default function App() {
             <span className="who-mark" aria-hidden="true">{user.username.slice(0, 1).toUpperCase()}</span>
             {user.username}
           </span>
-          <button type="button" className="ghost logout" onClick={logout}>
+          <button type="button" className="ghost logout" onClick={() => setConfirmLogout(true)}>
             Log out
           </button>
         </div>
@@ -88,6 +93,42 @@ export default function App() {
       ) : (
         <Dashboard />
       )}
+      {confirmLogout && (
+        <LogoutConfirm busy={loggingOut} onYes={logout} onNo={() => setConfirmLogout(false)} />
+      )}
+    </div>
+  );
+}
+
+function LogoutConfirm({ busy, onYes, onNo }) {
+  useEffect(() => lockPageScroll(), []);
+
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === "Escape" && !busy) onNo();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onNo]);
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onNo();
+      }}
+    >
+      <div className="modal logout-dialog" role="dialog" aria-modal="true" aria-labelledby="logout-title">
+        <h2 id="logout-title">Are you sure to log out</h2>
+        <div className="logout-actions">
+          <button type="button" className="modal-close" onClick={onNo} disabled={busy}>
+            No
+          </button>
+          <button type="button" className="logout-yes" onClick={onYes} disabled={busy}>
+            Yes
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

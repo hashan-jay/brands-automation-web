@@ -173,6 +173,42 @@ button {
 
 .ghost.logout:hover { background: rgba(127, 29, 29, 0.45); }
 
+.logout-dialog {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.logout-dialog h2 {
+  margin: 0;
+  color: #0f2744;
+  font-size: 20px;
+}
+
+.logout-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.logout-yes {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: #b91c1c;
+  color: #fff;
+  font-weight: 700;
+}
+
+.logout-yes:hover:not(:disabled) { filter: brightness(1.06); }
+
+.logout-yes:disabled,
+.logout-dialog .modal-close:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .ghost, .primary, .live {
   border: 0;
   border-radius: 999px;
