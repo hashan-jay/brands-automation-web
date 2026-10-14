@@ -17,7 +17,7 @@ from decimal import Decimal
 
 import requests
 from django.db import close_old_connections, transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Q
 
 from brands.models import SYDNEY, Brand, Customer, CustomerSync, Transaction, _clock, sydney_today
 from brands.services import _money, _parse_dt, _post
@@ -403,7 +403,12 @@ def _registered(brands: list[Brand], query: str, page: int) -> dict:
 
 def _played(brands: list[Brand], day: date) -> dict:
     people: dict[str, dict] = {}
-    rows = Transaction.objects.filter(txn_date=day, brand__in=brands).values_list(
+    rows = Transaction.objects.filter(
+        txn_date=day,
+        brand__in=brands,
+        status="COMPLETED",
+        type__in=["DEPOSIT", "WITHDRAW"],
+    ).values_list(
         "brand__name",
         "username",
         "player_name",
@@ -457,7 +462,12 @@ def _joined(brands: list[Brand], day: date) -> dict:
     start, end = _bounds(day)
     counts: dict[tuple[str, str], tuple[int, int]] = {}
     tallies = (
-        Transaction.objects.filter(txn_date=day, brand__in=brands, type__in=["DEPOSIT", "WITHDRAW"])
+        Transaction.objects.filter(
+            txn_date=day,
+            brand__in=brands,
+            status="COMPLETED",
+            type__in=["DEPOSIT", "WITHDRAW"],
+        )
         .values("brand__name", "username")
         .annotate(
             deposits=Count("id", filter=Q(type="DEPOSIT")),
@@ -484,31 +494,92 @@ def _joined(brands: list[Brand], day: date) -> dict:
     return {"count": len(listed), "rows": listed}
 
 
+_WITHDRAW_TTL = 120
+
+
+def _player_completed_total(brand: Brand, user_id: str, kind: str) -> tuple[Decimal, int] | None:
+    """Lifetime completed total for one player. userId is the brand player id, not the username."""
+    if not user_id or not brand.token or not brand.merchant_id:
+        return None
+    url = brand.domain.rstrip("/") + "/api/v1/index.php"
+    try:
+        body = _post(
+            url,
+            {
+                "module": "/transactions/getAllTransactions",
+                "accessId": brand.access_id,
+                "accessToken": brand.token,
+                "merchantId": brand.merchant_id,
+                "pageIndex": "0",
+                "pageSize": "1",
+                "status": "COMPLETED",
+                "type": kind,
+                "sDate": "2000-01-01 00:00:00",
+                "eDate": "2099-12-31 23:59:59",
+                "userId": user_id,
+            },
+        ).json()
+    except (requests.RequestException, ValueError):
+        return None
+    if str(body.get("status") or "") != "SUCCESS":
+        return None
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    try:
+        count = max(0, int(data.get("totalCount") or 0))
+    except (TypeError, ValueError):
+        count = 0
+    return abs(_money(data.get("totalAmount"))), count
+
+
+def _refresh_withdrawals(customers: list[Customer]) -> None:
+    def load(item: Customer) -> tuple[int, tuple[Decimal, int] | None]:
+        close_old_connections()
+        try:
+            return item.pk, _player_completed_total(item.brand, item.external_id, "WITHDRAW")
+        except Exception:
+            return item.pk, None
+        finally:
+            close_old_connections()
+
+    workers = min(8, len(customers))
+    found: list[Customer] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lifetime-withdraw") as pool:
+        for item, result in zip(customers, pool.map(load, customers)):
+            customer_id, totals = result
+            if customer_id != item.pk or totals is None:
+                continue
+            amount, count = totals
+            item.lifetime_withdraw = amount
+            item.lifetime_withdraw_count = count
+            found.append(item)
+    if not found:
+        return
+    from django.utils import timezone
+
+    stamped = timezone.now()
+    for item in found:
+        item.withdraw_synced_at = stamped
+    Customer.objects.bulk_update(
+        found,
+        ["lifetime_withdraw", "lifetime_withdraw_count", "withdraw_synced_at"],
+    )
+
+
 def _with_withdrawals(customers: list[Customer]) -> list[dict]:
-    """Completed withdrawals collected from the transaction API for these players."""
-    names = [item.username for item in customers if item.username]
-    brand_ids = {item.brand_id for item in customers}
-    totals: dict[tuple[int, str], tuple[Decimal, int]] = {}
-    if names and brand_ids:
-        grouped = (
-            Transaction.objects.filter(
-                brand_id__in=brand_ids,
-                type="WITHDRAW",
-                status="COMPLETED",
-                username__in=names,
-            )
-            .values("brand_id", "username")
-            .annotate(total=Sum("amount"), count=Count("id"))
-        )
-        for item in grouped:
-            amount = item["total"] or Decimal("0")
-            totals[(item["brand_id"], item["username"])] = (abs(amount), int(item["count"] or 0))
+    """Lifetime completed withdrawals from the transaction API, keyed by player id."""
+    stale = []
+    for item in customers:
+        synced = item.withdraw_synced_at
+        age = None if synced is None else time.time() - synced.timestamp()
+        if age is None or age > _WITHDRAW_TTL:
+            stale.append(item)
+    if stale:
+        _refresh_withdrawals(stale)
     rows = []
     for item in customers:
         row = _customer_row(item)
-        amount, count = totals.get((item.brand_id, item.username), (Decimal("0"), 0))
-        row["lifetime_withdraw"] = f"{amount:.2f}"
-        row["lifetime_withdraw_count"] = count
+        row["lifetime_withdraw"] = f"{item.lifetime_withdraw:.2f}"
+        row["lifetime_withdraw_count"] = item.lifetime_withdraw_count
         rows.append(row)
     return rows
 

@@ -233,8 +233,8 @@ export default function Customers() {
             <p className="customer-kicker">Section 2</p>
             <h3>Played on {dayLabel}</h3>
             <p>
-              Customers with a transaction on this day. Games is how many brands they were active on.
-              Deposits and withdrawals are the number of those transactions.
+              Customers with a completed deposit or withdrawal on this day. Games is how many brands
+              they were active on. Rejected and pending attempts are not counted.
             </p>
           </div>
           <div className="customer-tools">
