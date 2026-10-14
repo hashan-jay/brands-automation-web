@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { DateField, formatDay, today } from "./Dashboard";
 
@@ -41,6 +41,7 @@ export default function Customers() {
   const [date, setDate] = useState(today);
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
+  const [playedQuery, setPlayedQuery] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState(EMPTY);
   const [error, setError] = useState("");
@@ -99,6 +100,16 @@ export default function Customers() {
   const registered = data.registered || EMPTY.registered;
   const played = data.played || EMPTY.played;
   const joined = data.joined || EMPTY.joined;
+  const playedNeedle = playedQuery.trim().toLowerCase();
+  const playedRows = useMemo(() => {
+    const rows = played.rows || [];
+    if (!playedNeedle) return rows;
+    return rows.filter((row) => {
+      const id = String(row.username || "").toLowerCase();
+      const name = String(row.name || "").toLowerCase();
+      return id.includes(playedNeedle) || name.includes(playedNeedle);
+    });
+  }, [played.rows, playedNeedle]);
   const dayLabel = formatDay(date);
   const brandLabel = brand === "All" ? "all brands" : brand;
 
@@ -226,10 +237,25 @@ export default function Customers() {
               Deposits and withdrawals are the number of those transactions.
             </p>
           </div>
+          <div className="customer-tools">
+            <label>
+              Search
+              <input
+                value={playedQuery}
+                onChange={(event) => setPlayedQuery(event.target.value)}
+                placeholder="ID or name"
+              />
+            </label>
+          </div>
         </div>
         <p className="transfers-count">
           {loading ? (
             <>Loading {brandLabel}…</>
+          ) : playedNeedle ? (
+            <>
+              <strong>{playedRows.length.toLocaleString()}</strong>
+              {playedRows.length === 1 ? " customer matches" : " customers match"} this search
+            </>
           ) : (
             <>
               <strong>{played.count.toLocaleString()}</strong>
@@ -253,12 +279,14 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {!loading && played.rows.length === 0 && (
+              {!loading && playedRows.length === 0 && (
                 <tr>
-                  <td className="empty" colSpan={7}>No customers played on {dayLabel}.</td>
+                  <td className="empty" colSpan={7}>
+                    {playedNeedle ? "No customers match that search." : `No customers played on ${dayLabel}.`}
+                  </td>
                 </tr>
               )}
-              {played.rows.map((row, index) => (
+              {playedRows.map((row, index) => (
                 <tr key={`${row.username}-${row.name}-${row.mobile}-${index}`}>
                   <td>{row.username}</td>
                   <td>{row.name}</td>
