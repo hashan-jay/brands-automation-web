@@ -642,6 +642,7 @@ function BankLedger({ date, group, brand, revision }) {
   const [columnWidths, setColumnWidths] = useState([]);
   const [statusFilter, setStatusFilter] = useState("All");
   const [bankQuery, setBankQuery] = useState("");
+  const [activeOnly, setActiveOnly] = useState(false);
   const visibleRows = useMemo(() => {
     const query = bankQuery.trim().toLowerCase();
     return rows.filter((row) => {
@@ -652,7 +653,6 @@ function BankLedger({ date, group, brand, revision }) {
       return bank.includes(query) || account.includes(query);
     });
   }, [rows, statusFilter, bankQuery]);
-  const totals = useMemo(() => ledgerTotals(visibleRows), [visibleRows]);
   const orderedRows = useMemo(() => {
     const active = [];
     const inactive = [];
@@ -660,8 +660,9 @@ function BankLedger({ date, group, brand, revision }) {
       if (bankIsActive(row)) active.push(row);
       else inactive.push(row);
     }
-    return [...active, ...inactive];
-  }, [visibleRows]);
+    return activeOnly ? active : [...active, ...inactive];
+  }, [visibleRows, activeOnly]);
+  const totals = useMemo(() => ledgerTotals(orderedRows), [orderedRows]);
 
   useLayoutEffect(() => {
     const head = tableHead.current;
@@ -752,6 +753,32 @@ function BankLedger({ date, group, brand, revision }) {
           </p>
         </div>
         <div className="ledger-tools">
+          <div className="ledger-view-switch">
+            <button
+              type="button"
+              className={activeOnly ? "is-on" : ""}
+              aria-pressed={activeOnly}
+              onClick={() => setActiveOnly(true)}
+            >
+              Show only Active Banks
+            </button>
+            <input
+              className="switch"
+              type="checkbox"
+              role="switch"
+              checked={!activeOnly}
+              aria-label={activeOnly ? "Show only Active Banks" : "Show all Banks"}
+              onChange={(event) => setActiveOnly(!event.target.checked)}
+            />
+            <button
+              type="button"
+              className={activeOnly ? "" : "is-on"}
+              aria-pressed={!activeOnly}
+              onClick={() => setActiveOnly(false)}
+            >
+              Show all Banks
+            </button>
+          </div>
           <label className="ledger-filter ledger-search">
             Bank
             <input
@@ -812,7 +839,13 @@ function BankLedger({ date, group, brand, revision }) {
             {!loading && rows.length > 0 && orderedRows.length === 0 && (
               <tr>
                 <td className="ledger-empty" colSpan={14}>
-                  {bankQuery.trim() ? "No bank accounts match this search." : "No bank accounts for this status."}
+                  {bankQuery.trim()
+                    ? "No bank accounts match this search."
+                    : activeOnly && statusFilter !== "All"
+                      ? "No active banks for this status."
+                      : activeOnly
+                        ? "No active banks for this date."
+                        : "No bank accounts for this status."}
                 </td>
               </tr>
             )}
