@@ -753,30 +753,23 @@ function BankLedger({ date, group, brand, revision }) {
           </p>
         </div>
         <div className="ledger-tools">
-          <div className="ledger-view-switch">
+          <div className={`ledger-view-switch ${activeOnly ? "is-active" : "is-all"}`} role="group" aria-label="Banks shown">
+            <span className="ledger-view-switch-thumb" aria-hidden="true" />
             <button
               type="button"
-              className={activeOnly ? "is-on" : ""}
+              className={activeOnly ? "is-selected" : ""}
               aria-pressed={activeOnly}
               onClick={() => setActiveOnly(true)}
             >
-              Show only Active Banks
+              Active Banks
             </button>
-            <input
-              className="switch"
-              type="checkbox"
-              role="switch"
-              checked={!activeOnly}
-              aria-label={activeOnly ? "Show only Active Banks" : "Show all Banks"}
-              onChange={(event) => setActiveOnly(!event.target.checked)}
-            />
             <button
               type="button"
-              className={activeOnly ? "" : "is-on"}
+              className={activeOnly ? "" : "is-selected"}
               aria-pressed={!activeOnly}
               onClick={() => setActiveOnly(false)}
             >
-              Show all Banks
+              All Banks
             </button>
           </div>
           <label className="ledger-filter ledger-search">

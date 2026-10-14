@@ -1291,69 +1291,58 @@ body.modal-open {
 .ledger-search { flex-basis: 260px; }
 
 .ledger-view-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   align-self: flex-end;
-  padding-bottom: 6px;
+  width: 248px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #e6edf2;
+  box-shadow: inset 0 0 0 1px rgba(15, 39, 68, 0.08);
+}
+
+.ledger-view-switch-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: #15803d;
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.ledger-view-switch.is-all .ledger-view-switch-thumb {
+  transform: translateX(100%);
+  background: #0f2744;
 }
 
 .ledger-view-switch button {
+  position: relative;
+  z-index: 1;
   border: 0;
   background: transparent;
-  padding: 0;
-  max-width: 112px;
-  color: #8aa0b5;
-  font-size: 12px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 999px;
+  color: #0f2744;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  font-synthesis: none;
 }
 
-.ledger-view-switch button:first-child { text-align: right; }
-.ledger-view-switch button:last-child { text-align: left; }
-.ledger-view-switch button.is-on { color: #0f2744; }
-
-.ledger-view-switch input.switch {
-  appearance: none;
-  width: 46px;
-  height: 26px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: #15803d;
-  position: relative;
-  cursor: pointer;
-  box-shadow: none;
-  flex: 0 0 auto;
-  transition: background 160ms ease;
+.ledger-view-switch button.is-selected {
+  color: #fff;
+  font-weight: 700;
 }
 
-.ledger-view-switch input.switch::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 39, 68, 0.25);
-  transition: transform 160ms ease;
-}
-
-.ledger-view-switch input.switch:checked { background: #0f2744; }
-.ledger-view-switch input.switch:checked::after { transform: translateX(20px); }
-
-.ledger-view-switch input.switch:focus {
-  background: #15803d;
-  border-color: transparent;
-  box-shadow: 0 0 0 4px rgba(21, 128, 61, 0.18);
-}
-
-.ledger-view-switch input.switch:checked:focus {
-  background: #0f2744;
-  box-shadow: 0 0 0 4px rgba(15, 39, 68, 0.16);
+.ledger-view-switch button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.28);
 }
 
 .ledger-intro h2 {
