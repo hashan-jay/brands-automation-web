@@ -2,6 +2,30 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { DateField, formatDay, today } from "./Dashboard";
 
+const REGISTERED_COLUMNS = [
+  ["username", "Username"],
+  ["name", "Name"],
+  ["mobile", "Mobile"],
+  ["email", "Email"],
+  ["brand", "Brand"],
+  ["status", "Status"],
+  ["type", "Type"],
+  ["cash", "Cash", "money"],
+  ["lifetime_deposit", "Lifetime deposit", "money"],
+  ["lifetime_deposit_count", "Deposit count"],
+  ["bank_name", "Bank"],
+  ["bank_account_name", "Account name"],
+  ["bank_account_number", "Account no"],
+  ["bsb", "BSB"],
+  ["pay_id", "PayID"],
+  ["bank_locked", "Bank lock"],
+  ["referrer", "Referrer"],
+  ["tags", "Tags"],
+  ["registered", "Registered (Sydney)"],
+  ["visited", "Last visit (Sydney)"],
+  ["cash_site", "Cash site (Sydney)"],
+];
+
 const EMPTY = {
   registered: { count: 0, loaded: 0, complete: false, page: 1, pages: 1, rows: [] },
   played: { count: 0, rows: [] },
@@ -141,7 +165,7 @@ export default function Customers() {
                   setQuery(event.target.value);
                   setPage(1);
                 }}
-                placeholder="Username, name, or mobile"
+                placeholder="Username, name, mobile, bank, or PayID"
               />
             </label>
           </div>
@@ -163,34 +187,24 @@ export default function Customers() {
           <table>
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Name</th>
-                <th>Mobile</th>
-                <th>Email</th>
-                <th>Brand</th>
-                <th>Status</th>
-                <th>Registered (Sydney)</th>
-                <th>Last visit (Sydney)</th>
+                {REGISTERED_COLUMNS.map(([key, label]) => (
+                  <th key={key}>{label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {!loading && registered.rows.length === 0 && (
                 <tr>
-                  <td className="empty" colSpan={8}>
+                  <td className="empty" colSpan={REGISTERED_COLUMNS.length}>
                     {q ? "No customers match that search." : "No registered customers yet."}
                   </td>
                 </tr>
               )}
               {registered.rows.map((row) => (
                 <tr key={`${row.brand}-${row.id}`}>
-                  <td>{row.username}</td>
-                  <td>{row.name}</td>
-                  <td>{row.mobile}</td>
-                  <td>{row.email}</td>
-                  <td className="bank-name">{row.brand}</td>
-                  <td>{row.status}</td>
-                  <td>{row.registered}</td>
-                  <td>{row.visited}</td>
+                  {REGISTERED_COLUMNS.map(([key, , kind]) => (
+                    <td key={key} className={cellClass(key, kind)}>{cellText(row, key, kind)}</td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -321,6 +335,25 @@ export default function Customers() {
       </section>
     </div>
   );
+}
+
+function cellClass(key, kind) {
+  if (key === "brand") return "bank-name";
+  if (kind === "money" || key === "lifetime_deposit_count") return "customer-count";
+  return undefined;
+}
+
+function cellText(row, key, kind) {
+  const value = row[key];
+  if (kind === "money") return money(value);
+  if (value == null || value === "") return "";
+  return value;
+}
+
+function money(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function BrandLoading({ label }) {

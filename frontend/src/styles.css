@@ -2046,6 +2046,8 @@ body.modal-open {
 }
 
 .customer-table { max-height: 420px; }
+.customer-table th,
+.customer-table td { white-space: nowrap; }
 
 .customer-frame {
   position: relative;

@@ -7,6 +7,7 @@ withdrawals from the transactions already stored for that day.
 """
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -228,7 +229,7 @@ def _loop() -> None:
 
 
 def _sync_one(brand: Brand) -> bool:
-    """Copy the next oldest page. Returns True while pages remain."""
+    """Copy one register page. Known brands are refreshed newest-first. Returns True while pages remain."""
     now = time.monotonic()
     if _fail_until.get(brand.pk, 0) > now:
         return False
@@ -236,7 +237,10 @@ def _sync_one(brand: Brand) -> bool:
         sync, _created = CustomerSync.objects.get_or_create(brand=brand)
         if sync.total_pages and sync.next_page >= sync.total_pages:
             return False
-        batch, total, error = _fetch_page(brand, sync.next_page)
+        page = sync.next_page
+        if sync.total_pages:
+            page = max(sync.total_pages - 1 - sync.next_page, 0)
+        batch, total, error = _fetch_page(brand, page)
         if error:
             sync.message = error[:500]
             sync.save(update_fields=["message", "updated_at"])
@@ -298,6 +302,7 @@ def _upsert(brand: Brand, users: list[dict]) -> None:
             continue
         name = _HTML_RE.sub("", str(user.get("name") or ""))
         name = " ".join(name.split())
+        bank = _bank_fields(user.get("bank"))
         prepared.append(
             Customer(
                 brand=brand,
@@ -307,10 +312,17 @@ def _upsert(brand: Brand, users: list[dict]) -> None:
                 mobile=str(user.get("mobile") or "")[:64],
                 email=str(user.get("playerEmail") or "")[:255],
                 status=str(user.get("status") or "")[:32],
+                account_type=str(user.get("type") or "")[:32],
                 registered_at=_parse_dt(user.get("createdDateTime")),
                 visited_at=_parse_dt(user.get("visitedDateTime")),
+                cash_site_at=_parse_dt(user.get("cashSiteDatetime")),
+                cash=_money(user.get("cash")),
                 lifetime_deposit=_money(user.get("lifetimeDeposit")),
                 lifetime_deposit_count=_count(user.get("lifetimeDepositCount")),
+                referrer_name=str(user.get("referrerName") or "")[:128],
+                referrer_code=str(user.get("referrerCode") or "")[:64],
+                tags=_tags(user),
+                **bank,
             )
         )
     if not prepared:
@@ -327,10 +339,22 @@ def _upsert(brand: Brand, users: list[dict]) -> None:
                 "mobile",
                 "email",
                 "status",
+                "account_type",
                 "registered_at",
                 "visited_at",
+                "cash_site_at",
+                "cash",
                 "lifetime_deposit",
                 "lifetime_deposit_count",
+                "referrer_name",
+                "referrer_code",
+                "tags",
+                "bank_name",
+                "bank_account_name",
+                "bank_account_number",
+                "bank_bsb",
+                "pay_id",
+                "bank_locked",
             ],
         )
 
@@ -344,6 +368,12 @@ def _registered(brands: list[Brand], query: str, page: int) -> dict:
             | Q(name__icontains=needle)
             | Q(mobile__icontains=needle)
             | Q(email__icontains=needle)
+            | Q(bank_name__icontains=needle)
+            | Q(bank_account_name__icontains=needle)
+            | Q(bank_account_number__icontains=needle)
+            | Q(pay_id__icontains=needle)
+            | Q(referrer_name__icontains=needle)
+            | Q(referrer_code__icontains=needle)
         )
     total = qs.count()
     page_size = 50
@@ -452,6 +482,9 @@ def _joined(brands: list[Brand], day: date) -> dict:
 
 
 def _customer_row(item: Customer) -> dict:
+    referrer = item.referrer_name
+    if item.referrer_code:
+        referrer = f"{referrer} ({item.referrer_code})" if referrer else item.referrer_code
     return {
         "id": item.external_id,
         "username": item.username,
@@ -459,9 +492,22 @@ def _customer_row(item: Customer) -> dict:
         "mobile": item.mobile,
         "email": item.email,
         "status": item.status,
+        "type": item.account_type,
         "brand": item.brand.name,
+        "cash": f"{item.cash:.2f}",
+        "lifetime_deposit": f"{item.lifetime_deposit:.2f}",
+        "lifetime_deposit_count": item.lifetime_deposit_count,
+        "bank_name": item.bank_name,
+        "bank_account_name": item.bank_account_name,
+        "bank_account_number": item.bank_account_number,
+        "bsb": item.bank_bsb,
+        "pay_id": item.pay_id,
+        "bank_locked": "Locked" if item.bank_locked else "",
+        "referrer": referrer,
+        "tags": item.tags,
         "registered": _clock(item.registered_at),
         "visited": _clock(item.visited_at),
+        "cash_site": _clock(item.cash_site_at),
     }
 
 
@@ -497,6 +543,44 @@ def _span(users: list[dict]) -> tuple[datetime | None, datetime | None]:
     if not times:
         return None, None
     return min(times), max(times)
+
+
+def _bank_fields(raw: object) -> dict:
+    parsed: dict = {}
+    if isinstance(raw, dict):
+        parsed = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("{"):
+            try:
+                loaded = json.loads(text)
+            except json.JSONDecodeError:
+                loaded = None
+            if isinstance(loaded, dict):
+                parsed = loaded
+    lock = str(parsed.get("bankLock") or "").strip().lower()
+    return {
+        "bank_name": str(parsed.get("bank") or "")[:128],
+        "bank_account_name": str(parsed.get("bankAccountName") or "")[:255],
+        "bank_account_number": str(parsed.get("bankAccountNumber") or "")[:64],
+        "bank_bsb": str(parsed.get("bankBSB") or "")[:32],
+        "pay_id": str(parsed.get("payID") or "")[:128],
+        "bank_locked": lock not in {"", "0", "false", "no"},
+    }
+
+
+def _tags(user: dict) -> str:
+    raw = user.get("userTag")
+    tag = raw.get("tag") if isinstance(raw, dict) else None
+    if not isinstance(tag, dict):
+        return ""
+    parts = []
+    for key, value in tag.items():
+        text = str(value or "").strip()
+        if not text:
+            continue
+        parts.append(f"{key}: {text}")
+    return ", ".join(parts)[:255]
 
 
 def _count(value: object) -> int:
