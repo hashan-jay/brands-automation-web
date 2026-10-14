@@ -74,6 +74,7 @@ export default function Customers() {
   const played = data.played || EMPTY.played;
   const joined = data.joined || EMPTY.joined;
   const dayLabel = formatDay(date);
+  const brandLabel = brand === "All" ? "all brands" : brand;
 
   return (
     <div className="users-page customers-page">
@@ -146,11 +147,19 @@ export default function Customers() {
           </div>
         </div>
         <p className="transfers-count">
-          <strong>{registered.count.toLocaleString()}</strong>
-          {registered.count === 1 ? " customer" : " customers"}
-          {q ? " match this search" : ""}
+          {loading ? (
+            <>Loading {brandLabel}…</>
+          ) : (
+            <>
+              <strong>{registered.count.toLocaleString()}</strong>
+              {registered.count === 1 ? " customer" : " customers"}
+              {q ? " match this search" : ""}
+            </>
+          )}
         </p>
-        <div className="table-wrap customer-table">
+        <div className={`customer-frame${loading ? " is-loading" : ""}`}>
+          {loading && <BrandLoading label={`Loading ${brandLabel}`} />}
+          <div className="table-wrap customer-table">
           <table>
             <thead>
               <tr>
@@ -165,11 +174,6 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {loading && registered.rows.length === 0 && (
-                <tr>
-                  <td className="empty" colSpan={8}>Loading customers…</td>
-                </tr>
-              )}
               {!loading && registered.rows.length === 0 && (
                 <tr>
                   <td className="empty" colSpan={8}>
@@ -191,8 +195,9 @@ export default function Customers() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
-        <Pager page={registered.page} pages={registered.pages} onPage={setPage} />
+        {!loading && <Pager page={registered.page} pages={registered.pages} onPage={setPage} />}
       </section>
 
       <section className="card customer-section">
@@ -207,10 +212,18 @@ export default function Customers() {
           </div>
         </div>
         <p className="transfers-count">
-          <strong>{played.count.toLocaleString()}</strong>
-          {played.count === 1 ? " customer" : " customers"} played
+          {loading ? (
+            <>Loading {brandLabel}…</>
+          ) : (
+            <>
+              <strong>{played.count.toLocaleString()}</strong>
+              {played.count === 1 ? " customer" : " customers"} played
+            </>
+          )}
         </p>
-        <div className="table-wrap customer-table">
+        <div className={`customer-frame${loading ? " is-loading" : ""}`}>
+          {loading && <BrandLoading label={`Loading ${brandLabel}`} />}
+          <div className="table-wrap customer-table">
           <table>
             <thead>
               <tr>
@@ -224,11 +237,6 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {loading && played.rows.length === 0 && (
-                <tr>
-                  <td className="empty" colSpan={7}>Loading the day…</td>
-                </tr>
-              )}
               {!loading && played.rows.length === 0 && (
                 <tr>
                   <td className="empty" colSpan={7}>No customers played on {dayLabel}.</td>
@@ -247,6 +255,7 @@ export default function Customers() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </section>
 
@@ -262,10 +271,18 @@ export default function Customers() {
           </div>
         </div>
         <p className="transfers-count">
-          <strong>{joined.count.toLocaleString()}</strong>
-          {joined.count === 1 ? " new customer" : " new customers"}
+          {loading ? (
+            <>Loading {brandLabel}…</>
+          ) : (
+            <>
+              <strong>{joined.count.toLocaleString()}</strong>
+              {joined.count === 1 ? " new customer" : " new customers"}
+            </>
+          )}
         </p>
-        <div className="table-wrap customer-table">
+        <div className={`customer-frame${loading ? " is-loading" : ""}`}>
+          {loading && <BrandLoading label={`Loading ${brandLabel}`} />}
+          <div className="table-wrap customer-table">
           <table>
             <thead>
               <tr>
@@ -280,11 +297,6 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {loading && joined.rows.length === 0 && (
-                <tr>
-                  <td className="empty" colSpan={8}>Loading new customers…</td>
-                </tr>
-              )}
               {!loading && joined.rows.length === 0 && (
                 <tr>
                   <td className="empty" colSpan={8}>No new customers joined on {dayLabel}.</td>
@@ -304,8 +316,21 @@ export default function Customers() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function BrandLoading({ label }) {
+  return (
+    <div className="customer-load" role="status" aria-live="polite">
+      <div className="customer-load-ring" aria-hidden="true">
+        <span />
+        <span />
+      </div>
+      <p>{label}</p>
     </div>
   );
 }

@@ -2047,6 +2047,64 @@ body.modal-open {
 
 .customer-table { max-height: 420px; }
 
+.customer-frame {
+  position: relative;
+}
+
+.customer-frame.is-loading { min-height: 220px; }
+.customer-frame.is-loading .customer-table { min-height: 220px; }
+
+.customer-load {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(3px);
+}
+
+.customer-load-ring {
+  position: relative;
+  width: 52px;
+  height: 52px;
+}
+
+.customer-load-ring span {
+  position: absolute;
+  border-radius: 50%;
+  border: 3px solid transparent;
+}
+
+.customer-load-ring span:first-child {
+  inset: 0;
+  border-top-color: #0f766e;
+  border-right-color: rgba(15, 118, 110, 0.35);
+  animation: customer-spin 0.75s linear infinite;
+}
+
+.customer-load-ring span:last-child {
+  inset: 8px;
+  border-bottom-color: #0f2744;
+  border-left-color: rgba(15, 39, 68, 0.35);
+  animation: customer-spin 1.05s linear infinite reverse;
+}
+
+.customer-load p {
+  margin: 0;
+  color: #0f2744;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@keyframes customer-spin {
+  to { transform: rotate(360deg); }
+}
+
 .customer-count {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
@@ -2093,7 +2151,8 @@ body.modal-open {
   .login-card-glow,
   .login-card.has-error,
   .login-card.is-busy::before,
-  .login-submit::after {
+  .login-submit::after,
+  .customer-load-ring span {
     animation: none;
   }
 }
