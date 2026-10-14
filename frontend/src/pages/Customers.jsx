@@ -13,6 +13,8 @@ const REGISTERED_COLUMNS = [
   ["cash", "Cash", "money"],
   ["lifetime_deposit", "Lifetime deposit", "money"],
   ["lifetime_deposit_count", "Deposit count"],
+  ["lifetime_withdraw", "Lifetime withdraw", "money"],
+  ["lifetime_withdraw_count", "Withdraw count"],
   ["bank_name", "Bank"],
   ["bank_account_name", "Account name"],
   ["bank_account_number", "Account no"],
@@ -339,7 +341,7 @@ export default function Customers() {
 
 function cellClass(key, kind) {
   if (key === "brand") return "bank-name";
-  if (kind === "money" || key === "lifetime_deposit_count") return "customer-count";
+  if (kind === "money" || key === "lifetime_deposit_count" || key === "lifetime_withdraw_count") return "customer-count";
   return undefined;
 }
 

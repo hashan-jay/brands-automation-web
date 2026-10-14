@@ -13,10 +13,11 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import requests
 from django.db import close_old_connections, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 
 from brands.models import SYDNEY, Brand, Customer, CustomerSync, Transaction, _clock, sydney_today
 from brands.services import _money, _parse_dt, _post
@@ -380,10 +381,12 @@ def _registered(brands: list[Brand], query: str, page: int) -> dict:
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(max(page, 1), pages)
     offset = (page - 1) * page_size
-    rows = []
-    window = qs.select_related("brand").order_by("-registered_at", "brand__sort_order", "username", "id")
-    for item in window[offset : offset + page_size]:
-        rows.append(_customer_row(item))
+    window = list(
+        qs.select_related("brand").order_by("-registered_at", "brand__sort_order", "username", "id")[
+            offset : offset + page_size
+        ]
+    )
+    rows = _with_withdrawals(window)
     syncs = list(CustomerSync.objects.filter(brand__in=brands))
     loaded = Customer.objects.filter(brand__in=brands).count()
     known = [item for item in syncs if item.total_pages]
@@ -479,6 +482,35 @@ def _joined(brands: list[Brand], day: date) -> dict:
         row["withdrawals"] = withdrawals
         listed.append(row)
     return {"count": len(listed), "rows": listed}
+
+
+def _with_withdrawals(customers: list[Customer]) -> list[dict]:
+    """Completed withdrawals collected from the transaction API for these players."""
+    names = [item.username for item in customers if item.username]
+    brand_ids = {item.brand_id for item in customers}
+    totals: dict[tuple[int, str], tuple[Decimal, int]] = {}
+    if names and brand_ids:
+        grouped = (
+            Transaction.objects.filter(
+                brand_id__in=brand_ids,
+                type="WITHDRAW",
+                status="COMPLETED",
+                username__in=names,
+            )
+            .values("brand_id", "username")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+        for item in grouped:
+            amount = item["total"] or Decimal("0")
+            totals[(item["brand_id"], item["username"])] = (abs(amount), int(item["count"] or 0))
+    rows = []
+    for item in customers:
+        row = _customer_row(item)
+        amount, count = totals.get((item.brand_id, item.username), (Decimal("0"), 0))
+        row["lifetime_withdraw"] = f"{amount:.2f}"
+        row["lifetime_withdraw_count"] = count
+        rows.append(row)
+    return rows
 
 
 def _customer_row(item: Customer) -> dict:
