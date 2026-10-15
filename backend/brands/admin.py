@@ -43,6 +43,8 @@ class BankTransferAdmin(admin.ModelAdmin):
     )
     list_filter = ("transfer_date", "created_on")
     search_fields = ("from_bank_name", "from_account_name", "to_bank_name", "to_account_name", "remarks")
+
+
 class BrandSyncAdmin(admin.ModelAdmin):
     list_display = ("brand", "day", "row_count", "updated_at", "message")
     list_filter = ("day", "brand")
