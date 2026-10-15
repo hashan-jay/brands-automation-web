@@ -129,6 +129,162 @@ button {
 
 .modal.transfer-dialog .date-button { width: 100%; }
 
+.account-picker {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #0f2744;
+  font-weight: 700;
+}
+
+.account-picker.is-open { z-index: 6; }
+
+.account-picker-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #fbfcfd;
+  color: #0f2744;
+  font-weight: 500;
+  text-align: left;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.account-picker-button:hover { border-color: #b7c5d3; background: #fff; }
+
+.account-picker-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
+}
+
+.account-picker-value,
+.account-picker-placeholder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-picker-placeholder { color: #8b9aab; }
+
+.account-picker-caret {
+  flex: 0 0 auto;
+  color: #5c6b7c;
+}
+
+.account-picker.is-open .account-picker-caret { transform: rotate(180deg); }
+
+.account-picker-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(15, 39, 68, 0.18);
+  overflow: hidden;
+  animation: calendar-in 160ms ease;
+}
+
+.account-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 8px 4px;
+  padding: 0 10px;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #fbfcfd;
+  color: #5c6b7c;
+}
+
+.account-picker-search:focus-within {
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
+}
+
+.account-picker-search input {
+  width: 100%;
+  border: 0;
+  padding: 8px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-picker-search input:focus {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-picker-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.account-picker-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0f2744;
+  padding: 8px 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.account-picker-option:hover,
+.account-picker-option.is-active { background: #eef6f5; }
+
+.account-picker-option.is-selected,
+.account-picker-option.is-selected:hover,
+.account-picker-option.is-selected.is-active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.account-picker-option:disabled {
+  color: #94a3b8;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.account-picker-option mark {
+  background: #fef3c7;
+  color: inherit;
+  border-radius: 2px;
+}
+
+.account-picker-option.is-selected mark {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+.account-picker-empty {
+  padding: 10px 12px 14px;
+  color: #5b6b7c;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .top-actions, .filters, .toolbar {
   display: flex;
   align-items: center;
