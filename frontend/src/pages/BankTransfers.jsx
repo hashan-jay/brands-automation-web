@@ -387,17 +387,18 @@ export default function BankTransfers() {
                 <th>To account</th>
                 <th>Amount</th>
                 <th>Day created</th>
+                <th>User</th>
               </tr>
             </thead>
             <tbody>
               {loading && rows.length === 0 && (
                 <tr>
-                  <td className="empty" colSpan={7}>Loading bank transfers…</td>
+                  <td className="empty" colSpan={8}>Loading bank transfers…</td>
                 </tr>
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td className="empty" colSpan={7}>No bank transfers on {formatDay(date)}.</td>
+                  <td className="empty" colSpan={8}>No bank transfers on {formatDay(date)}.</td>
                 </tr>
               )}
               {rows.map((row) => (
@@ -409,6 +410,7 @@ export default function BankTransfers() {
                   <td className="bank-account">{row.to_account_name}</td>
                   <td className="transfer-amount">{formatMoney(row.amount)}</td>
                   <td>{formatDay(row.created_on)}</td>
+                  <td className="transfer-user">{row.username}</td>
                 </tr>
               ))}
             </tbody>

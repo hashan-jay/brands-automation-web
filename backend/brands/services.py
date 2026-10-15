@@ -1037,7 +1037,11 @@ def bank_transfer_accounts() -> list[dict]:
 
 
 def list_bank_transfers(day: date) -> dict:
-    rows = BankTransfer.objects.filter(transfer_date=day).order_by("-created_at", "-id")
+    rows = (
+        BankTransfer.objects.filter(transfer_date=day)
+        .select_related("created_by")
+        .order_by("-created_at", "-id")
+    )
     return {"date": day.isoformat(), "rows": [_transfer_payload(item) for item in rows]}
 
 
@@ -1081,6 +1085,7 @@ def create_bank_transfer(
 
 
 def _transfer_payload(item: BankTransfer) -> dict:
+    user = item.created_by
     return {
         "id": item.pk,
         "transfer_date": item.transfer_date.isoformat(),
@@ -1090,6 +1095,7 @@ def _transfer_payload(item: BankTransfer) -> dict:
         "to_bank_name": item.to_bank_name,
         "to_account_name": item.to_account_name,
         "amount": _money_text(item.amount),
+        "username": user.username if user is not None else "",
     }
 
 

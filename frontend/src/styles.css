@@ -150,6 +150,11 @@ button {
   text-align: right;
 }
 
+.transfer-user {
+  font-weight: 700;
+  color: #0f2744;
+}
+
 .modal.transfer-dialog {
   overflow: visible;
   width: min(560px, 100%);
