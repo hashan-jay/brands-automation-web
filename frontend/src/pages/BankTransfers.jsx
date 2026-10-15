@@ -269,17 +269,97 @@ function AccountPicker({ label, placeholder, accounts, value, blockedKey, onChan
   );
 }
 
+const TOAST_MS = 6000;
+
+function TransferToast({ notice, onDone }) {
+  const [leaving, setLeaving] = useState(false);
+  const timer = useRef(null);
+  const deadline = useRef(0);
+  const remaining = useRef(TOAST_MS);
+  const closing = useRef(false);
+
+  function finish() {
+    window.clearTimeout(timer.current);
+    onDone();
+  }
+
+  function dismiss() {
+    if (closing.current) return;
+    closing.current = true;
+    window.clearTimeout(timer.current);
+    setLeaving(true);
+    timer.current = window.setTimeout(finish, 180);
+  }
+
+  function arm(ms) {
+    window.clearTimeout(timer.current);
+    const delay = Math.max(0, ms);
+    remaining.current = delay;
+    deadline.current = Date.now() + delay;
+    timer.current = window.setTimeout(dismiss, delay);
+  }
+
+  useEffect(() => {
+    arm(TOAST_MS);
+    return () => window.clearTimeout(timer.current);
+  }, []);
+
+  function pause() {
+    if (closing.current) return;
+    window.clearTimeout(timer.current);
+    remaining.current = Math.max(0, deadline.current - Date.now());
+  }
+
+  function resume() {
+    if (closing.current) return;
+    arm(remaining.current);
+  }
+
+  return (
+    <aside
+      className={`transfer-toast${leaving ? " is-leaving" : ""}`}
+      role="status"
+      onMouseEnter={pause}
+      onMouseLeave={resume}
+      onFocus={pause}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) resume();
+      }}
+    >
+      <div className="transfer-toast-body">
+        <span className="transfer-toast-mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="16" height="16">
+            <path d="M5 10.5 8.2 13.5 15 6.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div className="transfer-toast-copy">
+          <strong>Transfer saved</strong>
+          <p>
+            {notice.from} sent {notice.amount} to {notice.to} on {notice.date}.
+          </p>
+        </div>
+        <button type="button" className="transfer-toast-close" aria-label="Dismiss notification" onClick={dismiss}>
+          <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+            <path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      <span className="transfer-toast-bar" />
+    </aside>
+  );
+}
+
 export default function BankTransfers() {
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(null);
+  const [toastKey, setToastKey] = useState(0);
   const [freshId, setFreshId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
-  const toastTimer = useRef(null);
 
   useEffect(() => {
     let stopped = false;
@@ -316,8 +396,6 @@ export default function BankTransfers() {
     };
   }, [date, reloadToken]);
 
-  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
-
   const total = useMemo(() => {
     const cents = rows.reduce((sum, row) => sum + amountCents(row.amount), 0);
     const negative = cents < 0;
@@ -328,15 +406,14 @@ export default function BankTransfers() {
 
   function saved(row) {
     setOpen(false);
-    setNotice(
-      `${row.from_bank_name} · ${row.from_account_name} sent ${formatMoney(row.amount)} to ${row.to_bank_name} · ${row.to_account_name} on ${formatDay(row.transfer_date)}.`,
-    );
+    setNotice({
+      from: `${row.from_bank_name} · ${row.from_account_name}`,
+      to: `${row.to_bank_name} · ${row.to_account_name}`,
+      amount: formatMoney(row.amount),
+      date: formatDay(row.transfer_date),
+    });
     setFreshId(row.id);
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => {
-      setNotice("");
-      setFreshId(null);
-    }, 6000);
+    setToastKey((key) => key + 1);
     if (row.transfer_date === date) {
       setRows((current) => [row, ...current.filter((item) => item.id !== row.id)]);
       setReloadToken((token) => token + 1);
@@ -363,7 +440,14 @@ export default function BankTransfers() {
 
       {error && <div className="form-error">{error}</div>}
       {notice && createPortal(
-        <p className="transfer-toast" role="status">{notice}</p>,
+        <TransferToast
+          key={toastKey}
+          notice={notice}
+          onDone={() => {
+            setNotice(null);
+            setFreshId(null);
+          }}
+        />,
         document.body,
       )}
 
