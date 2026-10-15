@@ -113,6 +113,37 @@ button {
 
 .transfers-table { max-height: calc(100vh - 280px); }
 
+.transfers-table tbody tr.is-fresh td,
+.transfers-table tbody tr.is-fresh:hover td {
+  background: #ecfdf5;
+}
+
+.transfer-toast {
+  position: fixed;
+  z-index: 80;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(640px, calc(100vw - 32px));
+  margin: 0;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: #064e3b;
+  color: #ecfdf5;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+  box-shadow: 0 16px 40px rgba(6, 78, 59, 0.28);
+  animation: transfer-toast-in 220ms ease;
+}
+
+@keyframes transfer-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 .transfer-amount {
   font-variant-numeric: tabular-nums;
   font-weight: 700;

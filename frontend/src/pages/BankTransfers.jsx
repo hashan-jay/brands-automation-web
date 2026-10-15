@@ -275,8 +275,11 @@ export default function BankTransfers() {
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [freshId, setFreshId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+  const toastTimer = useRef(null);
 
   useEffect(() => {
     let stopped = false;
@@ -311,7 +314,9 @@ export default function BankTransfers() {
     return () => {
       stopped = true;
     };
-  }, [date]);
+  }, [date, reloadToken]);
+
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   const total = useMemo(() => {
     const cents = rows.reduce((sum, row) => sum + amountCents(row.amount), 0);
@@ -326,7 +331,19 @@ export default function BankTransfers() {
     setNotice(
       `${row.from_bank_name} · ${row.from_account_name} sent ${formatMoney(row.amount)} to ${row.to_bank_name} · ${row.to_account_name} on ${formatDay(row.transfer_date)}.`,
     );
-    setDate(row.transfer_date);
+    setFreshId(row.id);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setNotice("");
+      setFreshId(null);
+    }, 6000);
+    if (row.transfer_date === date) {
+      setRows((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+      setReloadToken((token) => token + 1);
+    } else {
+      setRows([row]);
+      setDate(row.transfer_date);
+    }
   }
 
   return (
@@ -339,13 +356,16 @@ export default function BankTransfers() {
             Day created is the day this row was entered. Bank balances use the transfer date.
           </p>
         </div>
-        <button type="button" className="primary" onClick={() => { setNotice(""); setOpen(true); }}>
+        <button type="button" className="primary" onClick={() => setOpen(true)}>
           Transfer money
         </button>
       </header>
 
       {error && <div className="form-error">{error}</div>}
-      {notice && <p className="users-notice">{notice}</p>}
+      {notice && createPortal(
+        <p className="transfer-toast" role="status">{notice}</p>,
+        document.body,
+      )}
 
       <section className="card transfers-panel">
         <div className="transfers-tools">
@@ -381,7 +401,7 @@ export default function BankTransfers() {
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={row.id}>
+                <tr key={row.id} className={row.id === freshId ? "is-fresh" : undefined}>
                   <td>{formatDay(row.transfer_date)}</td>
                   <td className="bank-name">{row.from_bank_name}</td>
                   <td className="bank-account">{row.from_account_name}</td>
