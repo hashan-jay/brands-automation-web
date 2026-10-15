@@ -140,6 +140,7 @@ class BankTransferListView(APIView):
                 str(fields.get("to_account_name") or ""),
                 amount,
                 request.user,
+                str(fields.get("remarks") or ""),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)

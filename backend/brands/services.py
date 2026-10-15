@@ -1053,11 +1053,15 @@ def create_bank_transfer(
     to_account_name: str,
     amount: Decimal,
     created_by=None,
+    remarks="",
 ) -> dict:
     from_bank_name = from_bank_name.strip()
     from_account_name = from_account_name.strip()
     to_bank_name = to_bank_name.strip()
     to_account_name = to_account_name.strip()
+    remarks = str(remarks or "").strip()
+    if len(remarks) > 500:
+        raise ValueError("Remarks must be 500 characters or fewer.")
     if not from_bank_name or not from_account_name or not to_bank_name or not to_account_name:
         raise ValueError("Choose the bank the money leaves and the bank it arrives in.")
     if (from_bank_name, from_account_name) == (to_bank_name, to_account_name):
@@ -1079,6 +1083,7 @@ def create_bank_transfer(
         to_bank_name=to_bank_name,
         to_account_name=to_account_name,
         amount=amount,
+        remarks=remarks,
         created_by=created_by if getattr(created_by, "is_authenticated", False) else None,
     )
     return _transfer_payload(saved)
@@ -1095,8 +1100,18 @@ def _transfer_payload(item: BankTransfer) -> dict:
         "to_bank_name": item.to_bank_name,
         "to_account_name": item.to_account_name,
         "amount": _money_text(item.amount),
+        "remarks": item.remarks,
+        "transfer_time": _transfer_clock(item.created_at),
         "username": user.username if user is not None else "",
     }
+
+
+def _transfer_clock(value) -> str:
+    """Sydney clock time for the moment this transfer row was entered."""
+    if value is None:
+        return ""
+    local = value.astimezone(SYDNEY) if timezone.is_aware(value) else value.replace(tzinfo=SYDNEY)
+    return local.strftime("%H:%M:%S")
 
 
 def bank_accounts(day: date, brand_name: str, bank_name: str) -> dict:
