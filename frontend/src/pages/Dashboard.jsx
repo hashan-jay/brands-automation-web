@@ -75,6 +75,7 @@ export default function Dashboard() {
   const [status, setStatus] = useState("All statuses");
   const [sortBy, setSortBy] = useState("Sort by Time");
   const [focus, setFocus] = useState("");
+  const [hoverKey, setHoverKey] = useState("");
   const [live, setLive] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -82,6 +83,7 @@ export default function Dashboard() {
   const [opened, setOpened] = useState(null);
   const revision = useRef("");
   const tableRef = useRef(null);
+  const hoverTimer = useRef(0);
 
   useEffect(() => {
     api("/api/brands/")
@@ -162,6 +164,16 @@ export default function Dashboard() {
   }
 
   const stats = data?.stats || EMPTY_STATS;
+  const pulse = useStatPulse(stats);
+  const previewKey = hoverKey || focus;
+  const previewRows = useMemo(() => {
+    if (!previewKey) return [];
+    return (data?.rows || [])
+      .filter((row) => matchesWidget(row, previewKey))
+      .slice()
+      .sort((left, right) => compareText(right.time, left.time))
+      .slice(0, 5);
+  }, [data, previewKey]);
   const rows = useMemo(() => {
     const source = focus ? (data?.rows || []).filter((row) => matchesWidget(row, focus)) : data?.rows || [];
     return sortRows(source, sortBy);
@@ -180,6 +192,22 @@ export default function Dashboard() {
   }
 
   const viewStatus = friendlyStatus(live, refreshing, data);
+  const dayCount = Number(bucket(stats, "row_count").count) || 0;
+  const completedIn = bucket(stats, "completed_deposit");
+  const completedOut = bucket(stats, "completed_withdraw");
+  const netParts = netSplit(completedIn.amount, completedOut.amount);
+
+  function previewCard(key) {
+    window.clearTimeout(hoverTimer.current);
+    setHoverKey(key);
+  }
+
+  function releaseCard(event) {
+    const next = event?.relatedTarget;
+    if (next instanceof Element && next.closest(".widget, .stats-net, .stats-preview")) return;
+    window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => setHoverKey(""), 180);
+  }
 
   return (
     <>
@@ -347,48 +375,134 @@ export default function Dashboard() {
             </div>
             <button
               type="button"
-              className={`stats-net${focus === "net_completed" ? " selected" : ""}`}
+              className={`stats-net${focus === "net_completed" ? " selected" : ""}${hoverKey === "net_completed" ? " is-hot" : ""}${pulse.net_completed ? " is-live" : ""}`}
               aria-pressed={focus === "net_completed"}
               onClick={() => selectWidget("net_completed", "COMPLETED", "All types")}
+              onMouseEnter={() => previewCard("net_completed")}
+              onMouseLeave={releaseCard}
+              onFocus={() => previewCard("net_completed")}
+              onBlur={releaseCard}
             >
               <span>Net completed</span>
               <strong className={amountTone(bucket(stats, "net_completed").amount)}>
                 {money(bucket(stats, "net_completed").amount)}
               </strong>
               <span>{Number(bucket(stats, "net_completed").count).toLocaleString()} deposits and withdrawals</span>
+              <span className="net-split" aria-hidden="true">
+                <span className="net-in" style={{ width: `${netParts.inPct}%` }} />
+                <span className="net-out" style={{ width: `${netParts.outPct}%` }} />
+              </span>
+              <span className="net-legend">
+                <span className="up">In {money(completedIn.amount)}</span>
+                <span className="down">Out {money(completedOut.amount)}</span>
+              </span>
             </button>
           </div>
           <p className="stats-hint">
             {focusTitle ? (
               <>
-                Showing {focusTitle.toLowerCase()}.{" "}
+                Showing {focusTitle.toLowerCase()}. Hover another card to preview it.{" "}
                 <button type="button" className="text-button" onClick={clearFocus}>
                   Show all
                 </button>
               </>
             ) : (
-              "Click a card to list those transactions."
+              "Hover a card to preview those transactions. Click a card to list them."
             )}
           </p>
-          <div className={`widgets${focus ? " filtering" : ""}`}>
+          <div
+            className={`widgets${focus ? " filtering" : ""}`}
+            role="group"
+            aria-label="Statistic cards"
+            onKeyDown={(event) => {
+              const nextKey = moveWidgetFocus(event);
+              if (nextKey) previewCard(nextKey);
+            }}
+          >
             {widgets.map(([key, title, tone, nextStatus, nextType]) => {
               const item = bucket(stats, key);
               const selected = focus === key;
+              const share = shareOf(item.count, dayCount);
               return (
                 <button
                   key={key}
                   type="button"
-                  className={`widget ${tone}${selected ? " selected" : ""}`}
+                  className={`widget ${tone}${selected ? " selected" : ""}${hoverKey === key ? " is-hot" : ""}${pulse[key] ? " is-live" : ""}`}
+                  data-stat={key}
                   aria-pressed={selected}
                   onClick={() => selectWidget(key, nextStatus, nextType)}
+                  onMouseEnter={() => previewCard(key)}
+                  onMouseLeave={releaseCard}
+                  onFocus={() => previewCard(key)}
+                  onBlur={releaseCard}
                 >
                   <span className="widget-label">{title}</span>
                   <strong className={`widget-amount ${amountTone(item.amount)}`}>{money(item.amount)}</strong>
                   <span className="widget-count">{Number(item.count).toLocaleString()} transactions</span>
+                  <span
+                    className="widget-meter"
+                    role="meter"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(share)}
+                    aria-label={`${title} share of the day's transactions`}
+                  >
+                    <span style={{ width: `${share}%` }} />
+                  </span>
+                  <span className="widget-share">{selected ? "Showing · " : ""}{shareLabel(item.count, dayCount)}</span>
                 </button>
               );
             })}
           </div>
+          {previewKey && (
+            <div
+              className="stats-preview"
+              onMouseEnter={() => previewCard(previewKey)}
+              onMouseLeave={releaseCard}
+            >
+              <div className="stats-preview-head">
+                <strong>{widgetTitle(previewKey, widgets)}</strong>
+                <span>
+                  {Number(bucket(stats, previewKey).count).toLocaleString()} transactions
+                  {" · "}
+                  {money(bucket(stats, previewKey).amount)}
+                </span>
+              </div>
+              {previewRows.length === 0 ? (
+                <p className="stats-preview-empty">No {widgetTitle(previewKey, widgets).toLowerCase()} for this date.</p>
+              ) : (
+                <ul>
+                  {previewRows.map((row) => (
+                    <li key={`${row.brand}-${row.id}`}>
+                      <button type="button" onClick={() => openTransaction(row, setOpened)}>
+                        <span>{row.time}</span>
+                        <span>{row.username || row.name || "Unknown"}</span>
+                        <span className={amountTone(row.amount)}>{money(row.amount)}</span>
+                        <span>{row.type}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {Number(bucket(stats, previewKey).count) > previewRows.length && (
+                <button
+                  type="button"
+                  className="text-button stats-preview-more"
+                  onClick={() => {
+                    if (focus === previewKey) {
+                      tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      return;
+                    }
+                    const match = widgets.find((item) => item[0] === previewKey);
+                    if (previewKey === "net_completed") selectWidget("net_completed", "COMPLETED", "All types");
+                    else if (match) selectWidget(match[0], match[3], match[4]);
+                  }}
+                >
+                  List all {Number(bucket(stats, previewKey).count).toLocaleString()} in the table
+                </button>
+              )}
+            </div>
+          )}
           {brandSummary.length > 1 && (
             <div className="brand-chips">
               {brandSummary.map((item) => (
@@ -1483,6 +1597,73 @@ function amountTone(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount === 0) return "flat";
   return amount > 0 ? "up" : "down";
+}
+
+function shareOf(count, total) {
+  const value = Number(count) || 0;
+  const all = Number(total) || 0;
+  if (!all || value <= 0) return 0;
+  return Math.min(100, (value / all) * 100);
+}
+
+function shareLabel(count, total) {
+  const pct = shareOf(count, total);
+  const text = pct > 0 && pct < 10 ? pct.toFixed(1) : String(Math.round(pct));
+  return `${text}% of the day`;
+}
+
+function netSplit(depositAmount, withdrawAmount) {
+  const incoming = Math.abs(Number(depositAmount) || 0);
+  const outgoing = Math.abs(Number(withdrawAmount) || 0);
+  const total = incoming + outgoing;
+  if (!total) return { inPct: 0, outPct: 0 };
+  return {
+    inPct: (incoming / total) * 100,
+    outPct: (outgoing / total) * 100,
+  };
+}
+
+function moveWidgetFocus(event) {
+  const key = event.key;
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(key)) return;
+  const buttons = [...event.currentTarget.querySelectorAll(":scope > .widget")];
+  const index = buttons.indexOf(document.activeElement);
+  if (index < 0) return;
+  const columns = getComputedStyle(event.currentTarget).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+  let next = index;
+  if (key === "ArrowRight") next = index + 1;
+  if (key === "ArrowLeft") next = index - 1;
+  if (key === "ArrowDown") next = index + columns;
+  if (key === "ArrowUp") next = index - columns;
+  if (key === "Home") next = 0;
+  if (key === "End") next = buttons.length - 1;
+  if (next === index || next < 0 || next >= buttons.length) return "";
+  event.preventDefault();
+  buttons[next].focus();
+  return buttons[next].dataset.stat || "";
+}
+
+function useStatPulse(stats) {
+  const previous = useRef(null);
+  const [pulse, setPulse] = useState({});
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = stats;
+    if (!before || before === EMPTY_STATS) return undefined;
+    const keys = [...WIDGETS.map(([key]) => key), "other", "net_completed"];
+    const changed = {};
+    for (const key of keys) {
+      const left = before[key];
+      const right = stats?.[key];
+      if (!left || !right) continue;
+      if (left.amount !== right.amount || left.count !== right.count) changed[key] = true;
+    }
+    if (!Object.keys(changed).length) return undefined;
+    setPulse(changed);
+    const timer = window.setTimeout(() => setPulse({}), 900);
+    return () => window.clearTimeout(timer);
+  }, [stats]);
+  return pulse;
 }
 
 function friendlyStatus(live, refreshing, data) {

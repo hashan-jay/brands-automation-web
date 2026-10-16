@@ -1032,6 +1032,7 @@ button.stats-net {
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 button.stats-net:hover,
+button.stats-net.is-hot,
 button.stats-net.selected {
   background: #fff;
   border-color: #e2e8f0;
@@ -1040,7 +1041,35 @@ button.stats-net.selected {
   border-color: #15803d;
   box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.16);
 }
-.stats-net span { display: block; }
+button.stats-net.is-live strong {
+  animation: amount-pop 500ms ease;
+}
+.stats-net > span { display: block; }
+.stats-net > .net-split {
+  display: flex;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+.net-split > span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+.net-in { background: #15803d; }
+.net-out { background: #b91c1c; }
+.stats-net > .net-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.net-legend .up { color: #15803d; }
+.net-legend .down { color: #b91c1c; }
 .stats-net strong {
   display: block;
   margin-top: 2px;
@@ -1085,9 +1114,21 @@ button.stats-net.selected {
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
 
-.widget:hover {
+.widget:hover,
+.widget.is-hot {
   transform: translateY(-2px);
   box-shadow: 0 8px 18px rgba(15, 39, 68, 0.1);
+  border-color: var(--accent, #0f766e);
+}
+
+.widget.is-live .widget-amount {
+  animation: amount-pop 500ms ease;
+}
+
+@keyframes amount-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
 }
 
 .widget:active { transform: translateY(0); }
@@ -1156,6 +1197,113 @@ button.stats-net.selected {
   color: #475569;
   font-size: 13px;
   font-weight: 600;
+}
+
+.widget-meter {
+  display: block;
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.widget-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, #94a3b8);
+  transition: width 400ms ease;
+}
+
+.widget-share {
+  display: block;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stats-preview {
+  margin-top: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 18px rgba(15, 39, 68, 0.06);
+}
+
+.stats-preview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.stats-preview-head strong {
+  color: #0f2744;
+  font-size: 14px;
+}
+
+.stats-preview-head span,
+.stats-preview-empty {
+  color: #5b6b7c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stats-preview-empty { margin: 10px 0 0; }
+
+.stats-preview ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.stats-preview li + li { margin-top: 4px; }
+
+.stats-preview li button {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  width: 100%;
+  align-items: center;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: #0f2744;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stats-preview li button:hover,
+.stats-preview li button:focus-visible {
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.stats-preview li button span:nth-child(3) {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.stats-preview .up { color: #15803d; }
+.stats-preview .down { color: #b91c1c; }
+
+.stats-preview-more {
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget.is-live .widget-amount,
+  button.stats-net.is-live strong,
+  .widget-meter > span {
+    animation: none;
+    transition: none;
+  }
 }
 
 .brand-chips {
@@ -1904,6 +2052,7 @@ body.modal-open {
 
 @media (max-width: 640px) {
   .widgets { grid-template-columns: minmax(0, 1fr); }
+  .stats-preview li button { grid-template-columns: minmax(0, 1fr) auto; }
   .account { grid-template-columns: auto minmax(0, 1fr); }
   .switch-field {
     grid-column: 1 / -1;
