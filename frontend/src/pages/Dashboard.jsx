@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 
 const COLUMNS = [
@@ -23,6 +23,7 @@ const COLUMNS = [
   ["detail", "Detail"],
 ];
 
+const ROW_HEIGHT = 36;
 const EMPTY_BUCKET = { count: 0, amount: "0.00" };
 
 const EMPTY_STATS = {
@@ -83,7 +84,9 @@ export default function Dashboard() {
   const [opened, setOpened] = useState(null);
   const revision = useRef("");
   const tableRef = useRef(null);
+  const tableScroll = useRef(null);
   const hoverTimer = useRef(0);
+  const openRow = useCallback((row) => openTransaction(row, setOpened), []);
 
   useEffect(() => {
     api("/api/brands/")
@@ -185,7 +188,12 @@ export default function Dashboard() {
   const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other", "OTHER", "All types"]] : WIDGETS;
   const focusTitle = widgetTitle(focus, widgets);
   const brandSummary = data?.brand_summary || [];
-  const visibleBrands = brands.filter((item) => group === "All" || item.group === group);
+  const visibleBrands = useMemo(
+    () => brands.filter((item) => group === "All" || item.group === group),
+    [brands, group],
+  );
+  const windowRange = useVisibleRows(tableScroll, rows.length, ROW_HEIGHT);
+  const visibleRows = rows.slice(windowRange.start, windowRange.end);
 
   function chooseGroup(next) {
     setGroup(next);
@@ -320,7 +328,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap txn-window" ref={tableScroll}>
           <table>
             <thead>
               <tr>
@@ -337,33 +345,11 @@ export default function Dashboard() {
                   </td>
                 </tr>
               )}
-              {rows.map((row) => (
-                <tr
-                  key={`${row.brand}-${row.id}`}
-                  className={`${rowClass(row)} txn-row`.trim()}
-                  tabIndex={0}
-                  title="Show this transaction"
-                  onClick={() => openTransaction(row, setOpened)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") openTransaction(row, setOpened);
-                  }}
-                >
-                  {COLUMNS.map(([key]) => (
-                    <td
-                      key={key}
-                      className={
-                        key === "bank_name" && row[key]
-                          ? "bank-name"
-                          : key === "bank_account_name" && row[key]
-                            ? "bank-account"
-                            : undefined
-                      }
-                    >
-                      {row[key]}
-                    </td>
-                  ))}
-                </tr>
+              <RowSpacer height={windowRange.start * ROW_HEIGHT} />
+              {visibleRows.map((row) => (
+                <TransactionRow key={`${row.brand}-${row.id}`} row={row} onOpen={openRow} />
               ))}
+              <RowSpacer height={(rows.length - windowRange.end) * ROW_HEIGHT} />
             </tbody>
           </table>
         </div>
@@ -529,6 +515,75 @@ export default function Dashboard() {
     {opened && <TransactionDialog request={opened} onClose={() => setOpened(null)} />}
     </>
   );
+}
+
+function RowSpacer({ height }) {
+  if (height <= 0) return null;
+  return (
+    <tr className="txn-spacer" aria-hidden="true">
+      <td colSpan={COLUMNS.length}>
+        <div style={{ height }} />
+      </td>
+    </tr>
+  );
+}
+
+const TransactionRow = memo(function TransactionRow({ row, onOpen }) {
+  return (
+    <tr
+      className={`${rowClass(row)} txn-row`.trim()}
+      tabIndex={0}
+      title="Show this transaction"
+      onClick={() => onOpen(row)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") onOpen(row);
+      }}
+    >
+      {COLUMNS.map(([key]) => (
+        <td
+          key={key}
+          className={
+            key === "bank_name" && row[key]
+              ? "bank-name"
+              : key === "bank_account_name" && row[key]
+                ? "bank-account"
+                : undefined
+          }
+        >
+          {row[key]}
+        </td>
+      ))}
+    </tr>
+  );
+});
+
+function useVisibleRows(ref, count, rowHeight) {
+  const [range, setRange] = useState({ start: 0, end: 60 });
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const overscan = 16;
+      const start = Math.max(0, Math.floor(node.scrollTop / rowHeight) - overscan);
+      const end = Math.min(count, Math.ceil((node.scrollTop + node.clientHeight) / rowHeight) + overscan);
+      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    node.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new ResizeObserver(onScroll);
+    observer.observe(node);
+    return () => {
+      node.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [ref, count, rowHeight]);
+  return range;
 }
 
 function openTransaction(row, setOpened) {
@@ -745,7 +800,7 @@ const LEDGER_CARDS = [
   ["cash_out", "Cash out", "money"],
 ];
 
-function BankLedger({ date, group, brand, revision }) {
+const BankLedger = memo(function BankLedger({ date, group, brand, revision }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1065,7 +1120,7 @@ function BankLedger({ date, group, brand, revision }) {
       )}
     </section>
   );
-}
+});
 
 function BankDayDialog({ account, group, brand, revision, onClose }) {
   const [day, setDay] = useState(today);
@@ -1249,7 +1304,7 @@ function scopeLabel(group, brand) {
   return "All brands";
 }
 
-function BankAccounts({ date, brands, revision }) {
+const BankAccounts = memo(function BankAccounts({ date, brands, revision }) {
   const [game, setGame] = useState("");
   const [bankName, setBankName] = useState("");
   const [accountName, setAccountName] = useState("");
@@ -1408,7 +1463,7 @@ function BankAccounts({ date, brands, revision }) {
       )}
     </section>
   );
-}
+});
 
 function stamp(value) {
   const match = String(value || "")

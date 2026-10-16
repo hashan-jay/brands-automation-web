@@ -983,6 +983,20 @@ th {
   text-transform: uppercase;
 }
 
+.txn-window tbody tr.txn-row td {
+  height: 36px;
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 35px;
+}
+
+.txn-window .txn-spacer td {
+  padding: 0;
+  border: 0;
+  line-height: 0;
+}
+
 tr.txn-row { cursor: pointer; transition: background 120ms ease; }
 tr.txn-row:hover td { background: #f0fdfa; }
 tr.txn-row:focus-visible { outline: 2px solid #0f766e; outline-offset: -2px; }
