@@ -495,40 +495,64 @@ def _joined(brands: list[Brand], day: date) -> dict:
 
 
 _WITHDRAW_TTL = 120
+_recounted: set[int] = set()
 
 
 def _player_completed_total(brand: Brand, user_id: str, kind: str) -> tuple[Decimal, int] | None:
-    """Lifetime completed total for one player. userId is the brand player id, not the username."""
+    """Lifetime total for one player, excluding rejected withdrawals.
+
+    The brand API totalAmount and totalCount still include rejected rows, so
+    each transaction is counted on its own. userId is the brand player id.
+    """
     if not user_id or not brand.token or not brand.merchant_id:
         return None
     url = brand.domain.rstrip("/") + "/api/v1/index.php"
-    try:
-        body = _post(
-            url,
-            {
-                "module": "/transactions/getAllTransactions",
-                "accessId": brand.access_id,
-                "accessToken": brand.token,
-                "merchantId": brand.merchant_id,
-                "pageIndex": "0",
-                "pageSize": "1",
-                "status": "COMPLETED",
-                "type": kind,
-                "sDate": "2000-01-01 00:00:00",
-                "eDate": "2099-12-31 23:59:59",
-                "userId": user_id,
-            },
-        ).json()
-    except (requests.RequestException, ValueError):
-        return None
-    if str(body.get("status") or "") != "SUCCESS":
-        return None
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    try:
-        count = max(0, int(data.get("totalCount") or 0))
-    except (TypeError, ValueError):
-        count = 0
-    return abs(_money(data.get("totalAmount"))), count
+    amount = Decimal("0")
+    count = 0
+    page = 0
+    page_size = 100
+    while page < 400:
+        try:
+            body = _post(
+                url,
+                {
+                    "module": "/transactions/getAllTransactions",
+                    "accessId": brand.access_id,
+                    "accessToken": brand.token,
+                    "merchantId": brand.merchant_id,
+                    "pageIndex": str(page),
+                    "pageSize": str(page_size),
+                    "status": "COMPLETED",
+                    "type": kind,
+                    "sDate": "2000-01-01 00:00:00",
+                    "eDate": "2099-12-31 23:59:59",
+                    "userId": user_id,
+                },
+            ).json()
+        except (requests.RequestException, ValueError):
+            return None
+        if str(body.get("status") or "") != "SUCCESS":
+            return None
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        batch = data.get("transactions") if isinstance(data.get("transactions"), list) else []
+        for raw in batch:
+            if not isinstance(raw, dict):
+                continue
+            if str(raw.get("status") or "").strip().upper() == "REJECTED":
+                continue
+            txn_type = str(raw.get("type") or "").strip().upper()
+            if txn_type and txn_type != kind:
+                continue
+            amount += abs(_money(raw.get("cash")))
+            count += 1
+        try:
+            total_page = max(1, int(data.get("totalPage") or 1))
+        except (TypeError, ValueError):
+            total_page = 1
+        if not batch or page + 1 >= total_page:
+            break
+        page += 1
+    return amount, count
 
 
 def _refresh_withdrawals(customers: list[Customer]) -> None:
@@ -563,15 +587,16 @@ def _refresh_withdrawals(customers: list[Customer]) -> None:
         found,
         ["lifetime_withdraw", "lifetime_withdraw_count", "withdraw_synced_at"],
     )
+    _recounted.update(item.pk for item in found)
 
 
 def _with_withdrawals(customers: list[Customer]) -> list[dict]:
-    """Lifetime completed withdrawals from the transaction API, keyed by player id."""
+    """Lifetime withdrawals from the transaction API, excluding rejected rows."""
     stale = []
     for item in customers:
         synced = item.withdraw_synced_at
         age = None if synced is None else time.time() - synced.timestamp()
-        if age is None or age > _WITHDRAW_TTL:
+        if item.pk not in _recounted or age is None or age > _WITHDRAW_TTL:
             stale.append(item)
     if stale:
         _refresh_withdrawals(stale)
