@@ -717,6 +717,7 @@ button {
 }
 
 .side, .main { min-width: 0; padding: 14px; }
+.main { scroll-margin-top: 84px; }
 
 .side, .card form, .card {
   display: flex;

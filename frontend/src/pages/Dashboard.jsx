@@ -100,7 +100,7 @@ export default function Dashboard() {
     async function load() {
       if (loading) return;
       loading = true;
-      const params = new URLSearchParams({ date, group, brand, type, status });
+      const params = new URLSearchParams({ date, group, brand, type: "All types", status: "All statuses" });
       if (revision.current) params.set("rev", revision.current);
       try {
         const next = await api(`/api/dashboard/?${params.toString()}`);
@@ -126,7 +126,7 @@ export default function Dashboard() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [group, brand, date, type, status, live]);
+  }, [group, brand, date, live]);
 
   function selectWidget(key, nextStatus, nextType) {
     if (focus === key) {
@@ -138,7 +138,10 @@ export default function Dashboard() {
       setStatus(nextStatus);
       setType(nextType);
     }
-    tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const panel = tableRef.current;
+    const scroller = panel?.querySelector(".table-wrap");
+    if (scroller) scroller.scrollTop = 0;
+    panel?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function clearFocus() {
@@ -152,7 +155,7 @@ export default function Dashboard() {
     setError("");
     try {
       await api("/api/sync/", { method: "POST", body: { date } });
-      const params = new URLSearchParams({ date, group, brand, type, status });
+      const params = new URLSearchParams({ date, group, brand, type: "All types", status: "All statuses" });
       const next = await api(`/api/dashboard/?${params.toString()}`);
       if (next?.revision) revision.current = String(next.revision);
       if (!next?.unchanged) setData(next);
@@ -175,9 +178,9 @@ export default function Dashboard() {
       .slice(0, 5);
   }, [data, previewKey]);
   const rows = useMemo(() => {
-    const source = focus ? (data?.rows || []).filter((row) => matchesWidget(row, focus)) : data?.rows || [];
+    const source = (data?.rows || []).filter((row) => (focus ? matchesWidget(row, focus) : passesDropdown(row, status, type)));
     return sortRows(source, sortBy);
-  }, [data, sortBy, focus]);
+  }, [data, sortBy, focus, status, type]);
   if (data?.stats && data.stats.row_count == null) revision.current = "";
   const widgets = stats.other?.count ? [...WIDGETS, ["other", "Other", "other", "OTHER", "All types"]] : WIDGETS;
   const focusTitle = widgetTitle(focus, widgets);
@@ -269,7 +272,7 @@ export default function Dashboard() {
         <BankAccounts date={date} brands={visibleBrands} revision={data?.revision || ""} />
       </aside>
 
-      <section className="main">
+      <section className="main" ref={tableRef}>
         <div className="toolbar">
           <h2>{focusTitle ? focusTitle : "Transactions"}</h2>
           <div className="filters">
@@ -317,7 +320,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="table-wrap" ref={tableRef}>
+        <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -1559,6 +1562,13 @@ function compareText(left, right) {
 function widgetTitle(key, widgets) {
   if (key === "net_completed") return "Net completed";
   return widgets.find((item) => item[0] === key)?.[1] || "";
+}
+
+function passesDropdown(row, status, type) {
+  if (type !== "All types" && row.type !== type) return false;
+  if (status === "All statuses") return true;
+  if (status === "OTHER") return rowBucket(row) === "other";
+  return row.status === status;
 }
 
 function matchesWidget(row, key) {
